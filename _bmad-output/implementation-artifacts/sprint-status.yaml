@@ -1,0 +1,111 @@
+# generated: 2026-02-23
+# project: task-ino
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: C:\laragon\www\task-ino\_bmad-output\implementation-artifacts
+#
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: Automatically when first story is created (via create-story)
+#   - in-progress -> done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-02-23
+project: task-ino
+project_key: NOKEY
+tracking_system: file-system
+story_location: C:\laragon\www\task-ino\_bmad-output\implementation-artifacts
+
+development_status:
+  epic-1: backlog
+  1-1-capture-tasks-in-inbox-online-offline: backlog
+  1-2-deterministic-today-projection-from-local-state: backlog
+  1-4-configure-personal-today-cap: backlog
+  1-3-add-to-today-with-cap-enforcement: backlog
+  1-5-invariant-safe-single-and-bulk-mutations: backlog
+  1-8-local-persistence-and-rebuild-after-reload: backlog
+  1-6-explicit-end-of-day-closure-flow: backlog
+  1-7-daily-plan-review-before-execution: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-area-based-task-organization: backlog
+  2-2-cross-area-today-aggregation: backlog
+  2-3-single-item-move-area-and-today-membership: backlog
+  2-4-single-item-reschedule-temporal-context: backlog
+  2-5-bulk-selection-and-atomic-reschedule: backlog
+  2-6-daily-cycle-continuity-enforcement: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-runtime-isolation-from-sync-state: backlog
+  3-2-optional-sync-toggle-and-mode-management: backlog
+  3-3-sync-batch-protocol-with-deterministic-conflict-resolution: backlog
+  3-4-sync-state-visibility-without-planning-disruption: backlog
+  3-5-sync-error-transparency: backlog
+  3-6-multi-device-continuity-guardrails: backlog
+  3-7-e2ee-key-lifecycle-client-controlled: backlog
+  3-8-complete-human-readable-export-offline-capable: backlog
+  3-9-sync-reset-without-local-planning-loss: backlog
+  3-10-permanent-local-data-deletion: backlog
+  3-11-permanent-synced-data-deletion: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-persistent-append-only-event-log: backlog
+  4-2-integrity-validation-toolkit: backlog
+  4-3-safe-projection-rebuild-after-migration-or-corruption: backlog
+  4-4-readable-timeline-phase-scoped: backlog
+  4-5-guided-non-destructive-recovery: backlog
+  4-6-destructive-path-confirmation-restricted: backlog
+  4-7-no-destructive-reset-default: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-public-pages-baseline: backlog
+  5-2-authenticated-today-first-entry: backlog
+  5-3-responsive-layout-integrity-no-feature-fork: backlog
+  5-4-keyboard-first-operability: backlog
+  5-5-wcag-2-1-aa-compliance-for-core-views: backlog
+  5-6-browser-matrix-compliance-validation: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  6-1-telemetry-baseline-opt-in-content-free: backlog
+  6-2-minimal-guardrail-kpi-dashboard: backlog
+  6-3-regression-detection-rules-and-alerting: backlog
+  6-4-corrective-rollback-and-tuning-workflow: backlog
+  6-5-feature-conformance-gate: backlog
+  6-6-cohort-behavioral-validation-privacy-safe: backlog
+  epic-6-retrospective: optional
+
+  epic-7: backlog
+  7-1-expansion-eligibility-gate: backlog
+  7-2-invariant-safe-integration-boundary: backlog
+  7-3-assistant-governance-agency-preserving: backlog
+  7-4-growth-compatibility-validation: backlog
+  7-5-progressive-activation-and-reversal-policy: backlog
+  epic-7-retrospective: optional
