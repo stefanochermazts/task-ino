@@ -15,12 +15,14 @@ export async function createInboxTask(rawTitle) {
         };
     }
 
+    const nowIso = new Date().toISOString();
     const task = {
         id: buildTaskId(),
         title: validation.normalizedTitle,
         area: 'inbox',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        todayIncluded: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
     };
 
     try {

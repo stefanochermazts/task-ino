@@ -41,10 +41,10 @@ story_location: C:\laragon\www\task-ino\_bmad-output\implementation-artifacts
 
 development_status:
   epic-1: in-progress
-  1-1-capture-tasks-in-inbox-online-offline: review
-  1-2-deterministic-today-projection-from-local-state: backlog
-  1-4-configure-personal-today-cap: backlog
-  1-3-add-to-today-with-cap-enforcement: backlog
+  1-1-capture-tasks-in-inbox-online-offline: done
+  1-2-deterministic-today-projection-from-local-state: done
+  1-4-configure-personal-today-cap: done
+  1-3-add-to-today-with-cap-enforcement: done
   1-5-invariant-safe-single-and-bulk-mutations: backlog
   1-8-local-persistence-and-rebuild-after-reload: backlog
   1-6-explicit-end-of-day-closure-flow: backlog
