@@ -65,6 +65,51 @@
                         Inbox is empty. Capture your first task above.
                     </p>
                 </section>
+
+                <section aria-labelledby="today-title" class="mt-6">
+                    <div class="mb-2 flex items-center justify-between">
+                        <h2 id="today-title" class="text-lg font-medium">Today</h2>
+                        <span id="today-count" class="text-xs text-slate-500">0/3 selected</span>
+                    </div>
+                    <div class="mb-2 flex flex-wrap items-center gap-2">
+                        <label for="today-cap-input" class="text-xs text-slate-500">Cap</label>
+                        <input
+                            id="today-cap-input"
+                            type="number"
+                            min="1"
+                            max="99"
+                            value="3"
+                            aria-describedby="today-cap-value"
+                            class="w-16 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none ring-blue-600 focus:ring-2"
+                        >
+                        <span id="today-cap-value" class="text-xs text-slate-500">Cap 3 · 0 eligible</span>
+                        <span id="today-cap-feedback" class="text-xs text-amber-600" aria-live="polite"></span>
+                    </div>
+                    <ul id="today-list" class="space-y-2" aria-live="polite"></ul>
+                    <p id="today-empty" class="rounded-md border border-dashed border-emerald-300 p-3 text-sm text-slate-500">
+                        Today is empty. Add inclusion signals to build your plan deterministically.
+                    </p>
+                    <div
+                        id="over-cap-panel"
+                        class="mt-4 hidden rounded-lg border border-amber-200 bg-amber-50 p-3"
+                        role="dialog"
+                        aria-labelledby="over-cap-title"
+                        aria-describedby="over-cap-message"
+                    >
+                        <p id="over-cap-title" class="font-medium text-amber-900">Today is at capacity</p>
+                        <p id="over-cap-message" class="mt-1 text-sm text-amber-800">
+                            Choose an item to swap, or cancel.
+                        </p>
+                        <ul id="over-cap-swap-list" class="mt-2 space-y-1"></ul>
+                        <button
+                            id="over-cap-cancel"
+                            type="button"
+                            class="mt-2 rounded border border-amber-300 px-2 py-1 text-sm text-amber-900 hover:bg-amber-100"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </section>
             </section>
         </main>
     </body>

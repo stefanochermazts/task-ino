@@ -1,6 +1,6 @@
 # Story 1.1: Capture Tasks in Inbox (Online/Offline)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -119,6 +119,7 @@ gpt-5.3-codex
 - `php artisan test --filter=ValidateQuickCaptureInputTest`
 - `php artisan test` (full suite pass)
 - `npm run build` (blocked in this environment: `vite` not found in PATH/dependencies)
+- `npm run test:js` (frontend parity/resilience suite pass)
 
 ### Completion Notes List
 
@@ -128,7 +129,8 @@ gpt-5.3-codex
 - Implemented a dedicated planning surface (`planning-app`) with quick capture, Inbox list, and non-blocking network status channel.
 - Added local-first IndexedDB persistence module and planning command/invariant/projection layers for Inbox capture flow.
 - Added feature and unit tests validating capture shell requirements and invariant input rule.
-- Story status set to `review`.
+- Addressed adversarial review findings by hardening submit flow failure handling and adding frontend parity/resilience tests.
+- Story status set to `done`.
 
 ### File List
 
@@ -136,15 +138,32 @@ gpt-5.3-codex
 - resources/views/planning.blade.php
 - resources/js/app.js
 - resources/js/features/planning/app/initializePlanningInboxApp.js
+- resources/js/features/planning/app/initializePlanningInboxApp.test.js
 - resources/js/features/planning/commands/createInboxTask.js
+- resources/js/features/planning/commands/createInboxTask.test.js
 - resources/js/features/planning/invariants/validateQuickCaptureInput.js
 - resources/js/features/planning/persistence/inboxTaskStore.js
 - resources/js/features/planning/projections/renderInboxProjection.js
 - tests/Feature/PlanningInboxCaptureStoryTest.php
 - tests/Unit/ValidateQuickCaptureInputTest.php
+- vitest.config.js
+- package.json
+- package-lock.json
 - _bmad-output/implementation-artifacts/1-1-capture-tasks-in-inbox-online-offline.md
 - _bmad-output/implementation-artifacts/sprint-status.yaml
+
+### Senior Developer Review (AI)
+
+- Reviewer: Stefano (AI-assisted)  
+- Date: 2026-02-23  
+- Outcome: Approved after fixes  
+- Summary:
+  - HIGH findings on runtime resilience and AC-level test evidence were fixed.
+  - Added JS test coverage for immediate capture projection, online/offline parity messaging, and non-blocking behavior on unexpected capture failures.
+  - Strengthened create-task determinism by using a single timestamp for `createdAt` and `updatedAt` during initial creation.
+  - Re-ran targeted PHP tests and frontend test suite successfully.
 
 ### Change Log
 
 - 2026-02-23: Implemented Story 1.1 with local-first quick capture + Inbox projection, online/offline non-blocking UX signaling, and supporting tests.
+- 2026-02-23: Completed adversarial code review remediation (runtime hardening + frontend parity/resilience tests) and marked story as done.

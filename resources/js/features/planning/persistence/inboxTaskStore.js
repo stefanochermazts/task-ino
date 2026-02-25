@@ -57,6 +57,101 @@ export async function saveInboxTask(task) {
     return task;
 }
 
+export async function getInboxTask(id) {
+    return runTransaction('readonly', (store) => {
+        return new Promise((resolve, reject) => {
+            const request = store.get(id);
+            request.onsuccess = () => resolve(request.result ?? null);
+            request.onerror = () => reject(new Error('Unable to load task.'));
+        });
+    });
+}
+
+export async function addTaskToTodayWithCap(taskId, todayCap) {
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const listRequest = store.getAll();
+            listRequest.onsuccess = () => {
+                const tasks = Array.isArray(listRequest.result) ? listRequest.result : [];
+                const task = tasks.find((item) => item?.id === taskId) ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+
+                const cap = Number.parseInt(String(todayCap ?? ''), 10);
+                const validCap = Number.isFinite(cap) && cap > 0 ? cap : 3;
+                const currentTodayCount = tasks.filter((item) => item?.todayIncluded === true).length;
+                const alreadyInToday = task.todayIncluded === true;
+                if (!alreadyInToday && currentTodayCount >= validCap) {
+                    resolve({ ok: false, code: 'TODAY_CAP_EXCEEDED' });
+                    return;
+                }
+
+                const updated = {
+                    ...task,
+                    todayIncluded: true,
+                    updatedAt: new Date().toISOString(),
+                };
+                const saveRequest = store.put(updated);
+                saveRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                saveRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            listRequest.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
+export async function swapTasksInToday(addTaskId, removeTaskId) {
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const listRequest = store.getAll();
+            listRequest.onsuccess = () => {
+                const tasks = Array.isArray(listRequest.result) ? listRequest.result : [];
+                const addTask = tasks.find((item) => item?.id === addTaskId) ?? null;
+                const removeTask = tasks.find((item) => item?.id === removeTaskId) ?? null;
+                if (!addTask || !removeTask) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                if (removeTask.todayIncluded !== true) {
+                    resolve({ ok: false, code: 'REMOVE_TASK_NOT_IN_TODAY' });
+                    return;
+                }
+
+                const nowIso = new Date().toISOString();
+                const removeUpdated = {
+                    ...removeTask,
+                    todayIncluded: false,
+                    updatedAt: nowIso,
+                };
+                const addUpdated = {
+                    ...addTask,
+                    todayIncluded: true,
+                    updatedAt: nowIso,
+                };
+
+                let writesDone = 0;
+                const onWriteSuccess = () => {
+                    writesDone += 1;
+                    if (writesDone === 2) {
+                        resolve({ ok: true });
+                    }
+                };
+
+                const removeRequest = store.put(removeUpdated);
+                removeRequest.onsuccess = onWriteSuccess;
+                removeRequest.onerror = () => reject(new Error('Unable to save task.'));
+
+                const addRequest = store.put(addUpdated);
+                addRequest.onsuccess = onWriteSuccess;
+                addRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            listRequest.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
 export async function listInboxTasks() {
     return runTransaction('readonly', (store) => {
         return new Promise((resolve, reject) => {
