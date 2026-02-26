@@ -8,7 +8,7 @@ function parseTodayCap(value) {
     return parsed;
 }
 
-function isValidTaskRecord(task) {
+export function isValidTaskRecord(task) {
     const id = String(task?.id ?? '').trim();
     const title = String(task?.title ?? '').trim();
     if (!id || !title) {

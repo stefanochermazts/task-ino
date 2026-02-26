@@ -16,6 +16,6 @@
                     Welcome page placeholder. The active planning UI is served by the `/` route through `planning.blade.php`.
                 </p>
             </section>
-        </main>
+            </main>
     </body>
 </html>

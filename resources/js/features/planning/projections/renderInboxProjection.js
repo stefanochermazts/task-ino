@@ -1,6 +1,23 @@
 export function renderInboxProjection(tasks, ui, options = {}) {
-    const { onAddToToday } = options;
+    const { onAddToToday, onBulkAddToToday } = options;
     ui.list.innerHTML = '';
+
+    const nonTodayTasks = tasks.filter((t) => !t.todayIncluded);
+    if (onBulkAddToToday && nonTodayTasks.length > 1) {
+        const actionRow = document.createElement('li');
+        actionRow.className = 'flex justify-end pb-1';
+        const bulkBtn = document.createElement('button');
+        bulkBtn.type = 'button';
+        bulkBtn.textContent = `Add all ${nonTodayTasks.length} to Today`;
+        bulkBtn.className =
+            'rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100';
+        bulkBtn.dataset.action = 'bulk-add-to-today';
+        bulkBtn.addEventListener('click', () =>
+            onBulkAddToToday(nonTodayTasks.map((t) => t.id)),
+        );
+        actionRow.appendChild(bulkBtn);
+        ui.list.appendChild(actionRow);
+    }
 
     if (tasks.length === 0) {
         ui.empty.classList.remove('hidden');

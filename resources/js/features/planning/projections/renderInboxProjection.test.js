@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderInboxProjection } from './renderInboxProjection';
 
 function buildUi() {
@@ -52,5 +52,61 @@ describe('renderInboxProjection', () => {
 
         const btn = ui.list.querySelector('button');
         expect(btn).toBeNull();
+    });
+
+    it('renders bulk Add all button when onBulkAddToToday provided and multiple non-Today tasks', () => {
+        const ui = buildUi();
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false },
+            { id: 't2', title: 'Task 2', todayIncluded: false },
+        ];
+
+        renderInboxProjection(tasks, ui, { onBulkAddToToday: () => {} });
+
+        const bulkBtn = ui.list.querySelector('button[data-action="bulk-add-to-today"]');
+        expect(bulkBtn).not.toBeNull();
+        expect(bulkBtn.textContent).toBe('Add all 2 to Today');
+    });
+
+    it('does not render bulk Add all button when only one non-Today task', () => {
+        const ui = buildUi();
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false },
+        ];
+
+        renderInboxProjection(tasks, ui, { onBulkAddToToday: () => {} });
+
+        const bulkBtn = ui.list.querySelector('button[data-action="bulk-add-to-today"]');
+        expect(bulkBtn).toBeNull();
+    });
+
+    it('calls onBulkAddToToday with IDs of all non-Today tasks when bulk button clicked', () => {
+        const ui = buildUi();
+        const onBulkAddToToday = vi.fn();
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false },
+            { id: 't2', title: 'Task 2', todayIncluded: false },
+            { id: 't3', title: 'Task 3', todayIncluded: true },
+        ];
+
+        renderInboxProjection(tasks, ui, { onBulkAddToToday });
+
+        const bulkBtn = ui.list.querySelector('button[data-action="bulk-add-to-today"]');
+        bulkBtn.dispatchEvent(new Event('click'));
+
+        expect(onBulkAddToToday).toHaveBeenCalledWith(['t1', 't2']);
+    });
+
+    it('does not render bulk Add all button when onBulkAddToToday not provided', () => {
+        const ui = buildUi();
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false },
+            { id: 't2', title: 'Task 2', todayIncluded: false },
+        ];
+
+        renderInboxProjection(tasks, ui, { onAddToToday: () => {} });
+
+        const bulkBtn = ui.list.querySelector('button[data-action="bulk-add-to-today"]');
+        expect(bulkBtn).toBeNull();
     });
 });
