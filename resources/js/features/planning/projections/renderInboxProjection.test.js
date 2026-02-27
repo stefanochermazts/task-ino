@@ -109,4 +109,45 @@ describe('renderInboxProjection', () => {
         const bulkBtn = ui.list.querySelector('button[data-action="bulk-add-to-today"]');
         expect(bulkBtn).toBeNull();
     });
+
+    it('renders per-task area selector when onSetTaskArea provided and multiple areas exist', () => {
+        const ui = buildUi();
+        const onSetTaskArea = vi.fn();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox' }];
+
+        renderInboxProjection(tasks, ui, { onSetTaskArea, areas: ['inbox', 'work'] });
+
+        const select = ui.list.querySelector('select[aria-label="Area for Task 1"]');
+        expect(select).not.toBeNull();
+        expect(select.querySelectorAll('option').length).toBe(2);
+        expect(select.value).toBe('inbox');
+    });
+
+    it('calls onSetTaskArea with task id and new area when selection changes', () => {
+        const ui = buildUi();
+        const onSetTaskArea = vi.fn();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox' }];
+
+        renderInboxProjection(tasks, ui, { onSetTaskArea, areas: ['inbox', 'work'] });
+
+        const select = ui.list.querySelector('select[aria-label="Area for Task 1"]');
+        select.value = 'work';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(onSetTaskArea).toHaveBeenCalledWith('t1', 'work');
+    });
+
+    it('does not call onSetTaskArea when selection stays on current area', () => {
+        const ui = buildUi();
+        const onSetTaskArea = vi.fn();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false, area: 'work' }];
+
+        renderInboxProjection(tasks, ui, { onSetTaskArea, areas: ['inbox', 'work'] });
+
+        const select = ui.list.querySelector('select[aria-label="Area for Task 1"]');
+        select.value = 'work';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(onSetTaskArea).not.toHaveBeenCalled();
+    });
 });

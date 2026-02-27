@@ -10,6 +10,11 @@ const swapToTodayMock = vi.fn();
 const bulkAddToTodayMock = vi.fn();
 const removeFromTodayMock = vi.fn();
 const pauseTaskMock = vi.fn();
+const setTaskAreaMock = vi.fn();
+
+vi.mock('../commands/setTaskArea', () => ({
+    setTaskArea: (...args) => setTaskAreaMock(...args),
+}));
 
 vi.mock('../commands/createInboxTask', () => ({
     createInboxTask: (...args) => createInboxTaskMock(...args),
@@ -34,6 +39,16 @@ vi.mock('../commands/pauseTask', () => ({
 
 vi.mock('../persistence/inboxTaskStore', () => ({
     listInboxTasks: (...args) => listInboxTasksMock(...args),
+}));
+
+vi.mock('../persistence/areaStore', () => ({
+    listAreas: () => ['inbox', 'work'],
+    addArea: (id) => {
+        if (!id || String(id).trim() === '') return { ok: false, code: 'INVALID_AREA_ID' };
+        if (String(id).toLowerCase() === 'inbox') return { ok: false, code: 'INBOX_IMMUTABLE' };
+        return { ok: true };
+    },
+    isValidArea: (id) => ['inbox', 'work'].includes(String(id ?? '').trim().toLowerCase()),
 }));
 
 vi.mock('../projections/renderInboxProjection', () => ({
@@ -69,6 +84,16 @@ function buildAppHtml() {
                 <button id="quick-capture-submit" type="submit">Add</button>
             </form>
             <p id="quick-capture-feedback"></p>
+            <h2 id="inbox-title">Inbox</h2>
+            <select id="area-selector" aria-label="Filter by area"></select>
+            <button id="add-area-btn" type="button">+ Add area</button>
+            <p id="area-feedback" class="hidden"></p>
+            <div id="add-area-panel" class="hidden" role="region" aria-label="Add new area">
+                <input id="add-area-input" type="text" placeholder="e.g. personal" />
+                <p id="add-area-error" class="hidden"></p>
+                <button id="add-area-confirm" type="button">Add</button>
+                <button id="add-area-cancel" type="button">Cancel</button>
+            </div>
             <ul id="inbox-list"></ul>
             <p id="inbox-empty"></p>
             <span id="inbox-count"></span>
@@ -102,6 +127,7 @@ function buildAppHtml() {
         </section>
     `;
     localStorage.removeItem('planning.todayCap');
+    localStorage.removeItem('planning.areas');
 }
 
 async function flushAsyncWork() {
@@ -121,6 +147,7 @@ describe('initializePlanningInboxApp', () => {
         bulkAddToTodayMock.mockResolvedValue({ ok: true });
         removeFromTodayMock.mockResolvedValue({ ok: true });
         pauseTaskMock.mockResolvedValue({ ok: true });
+        setTaskAreaMock.mockResolvedValue({ ok: true });
         listInboxTasksMock.mockResolvedValue([]);
         computeTodayProjectionMock.mockReturnValue({
             items: [],
@@ -542,6 +569,8 @@ describe('initializePlanningInboxApp', () => {
         expect(itemList.textContent).toContain('Today 2');
         expect(itemList.querySelectorAll('.defer-btn').length).toBe(2);
         expect(itemList.querySelectorAll('.pause-btn').length).toBe(2);
+        const firstDecisionBtn = itemList.querySelector('.defer-btn');
+        expect(document.activeElement).toBe(firstDecisionBtn);
     });
 
     it('defers an item from closure panel and updates Today', async () => {
@@ -678,6 +707,7 @@ describe('initializePlanningInboxApp', () => {
 
         const closureError = document.querySelector('#closure-error');
         expect(closureError.textContent).toBe('Selected item is not in Today.');
+        expect(closureError.classList.contains('hidden')).toBe(false);
         expect(document.querySelector('#closure-panel').classList.contains('hidden')).toBe(false);
     });
 
@@ -711,6 +741,7 @@ describe('initializePlanningInboxApp', () => {
 
         const closureError = document.querySelector('#closure-error');
         expect(closureError.textContent).toBe('Selected item is not in Today.');
+        expect(closureError.classList.contains('hidden')).toBe(false);
         expect(document.querySelector('#closure-panel').classList.contains('hidden')).toBe(false);
     });
 
@@ -876,5 +907,174 @@ describe('initializePlanningInboxApp', () => {
         expect(reviewError.textContent).toBe('Unable to load plan for review. Please retry.');
         expect(reviewError.classList.contains('hidden')).toBe(false);
         expect(document.querySelector('#quick-capture-feedback').textContent).toBe('');
+    });
+
+    it('opens add-area panel when add-area-btn clicked and focuses input', async () => {
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const addAreaBtn = document.querySelector('#add-area-btn');
+        const addAreaPanel = document.querySelector('#add-area-panel');
+        const addAreaError = document.querySelector('#add-area-error');
+        const addAreaInput = document.querySelector('#add-area-input');
+
+        expect(addAreaPanel.classList.contains('hidden')).toBe(true);
+        expect(addAreaError.classList.contains('hidden')).toBe(true);
+
+        addAreaBtn.dispatchEvent(new Event('click', { bubbles: true }));
+
+        expect(addAreaPanel.classList.contains('hidden')).toBe(false);
+        expect(addAreaError.classList.contains('hidden')).toBe(true);
+        expect(document.activeElement).toBe(addAreaInput);
+    });
+
+    it('add-area success closes panel and clears error', async () => {
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const addAreaBtn = document.querySelector('#add-area-btn');
+        const addAreaPanel = document.querySelector('#add-area-panel');
+        const addAreaInput = document.querySelector('#add-area-input');
+        const addAreaConfirm = document.querySelector('#add-area-confirm');
+        const addAreaError = document.querySelector('#add-area-error');
+
+        addAreaBtn.dispatchEvent(new Event('click', { bubbles: true }));
+        addAreaInput.value = 'personal';
+        addAreaConfirm.dispatchEvent(new Event('click', { bubbles: true }));
+
+        expect(addAreaPanel.classList.contains('hidden')).toBe(true);
+        expect(addAreaError.classList.contains('hidden')).toBe(true);
+        expect(addAreaError.textContent).toBe('');
+    });
+
+    it('add-area error shows dedicated error element and removes hidden (Epic 1 pattern)', async () => {
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const addAreaBtn = document.querySelector('#add-area-btn');
+        const addAreaPanel = document.querySelector('#add-area-panel');
+        const addAreaInput = document.querySelector('#add-area-input');
+        const addAreaConfirm = document.querySelector('#add-area-confirm');
+        const addAreaError = document.querySelector('#add-area-error');
+
+        addAreaBtn.dispatchEvent(new Event('click', { bubbles: true }));
+        addAreaInput.value = 'inbox';
+        addAreaConfirm.dispatchEvent(new Event('click', { bubbles: true }));
+
+        expect(addAreaError.textContent).toBe('Inbox is a reserved area.');
+        expect(addAreaError.classList.contains('hidden')).toBe(false);
+        expect(addAreaPanel.classList.contains('hidden')).toBe(false);
+    });
+
+    it('add-area cancel closes panel and clears error', async () => {
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const addAreaBtn = document.querySelector('#add-area-btn');
+        const addAreaPanel = document.querySelector('#add-area-panel');
+        const addAreaInput = document.querySelector('#add-area-input');
+        const addAreaConfirm = document.querySelector('#add-area-confirm');
+        const addAreaCancel = document.querySelector('#add-area-cancel');
+        const addAreaError = document.querySelector('#add-area-error');
+
+        addAreaBtn.dispatchEvent(new Event('click', { bubbles: true }));
+        addAreaInput.value = 'inbox';
+        addAreaConfirm.dispatchEvent(new Event('click', { bubbles: true }));
+        expect(addAreaError.classList.contains('hidden')).toBe(false);
+
+        addAreaCancel.dispatchEvent(new Event('click', { bubbles: true }));
+
+        expect(addAreaPanel.classList.contains('hidden')).toBe(true);
+        expect(addAreaError.textContent).toBe('');
+        expect(addAreaError.classList.contains('hidden')).toBe(true);
+    });
+
+    it('filters inbox projection by selected area and updates title on selector change', async () => {
+        const tasks = [
+            { id: 't-inbox', title: 'Inbox task', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't-work', title: 'Work task', todayIncluded: false, area: 'work', createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+
+        const renderedArgs = [];
+        renderInboxProjectionMock.mockImplementation((renderedTasks) => {
+            renderedArgs.push(renderedTasks);
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        expect(renderedArgs[0].map((t) => t.id)).toEqual(['t-inbox']);
+        expect(document.querySelector('#inbox-title').textContent).toBe('Inbox');
+
+        const selector = document.querySelector('#area-selector');
+        selector.value = 'work';
+        selector.dispatchEvent(new Event('change', { bubbles: true }));
+        await flushAsyncWork();
+
+        expect(renderedArgs.at(-1).map((t) => t.id)).toEqual(['t-work']);
+        expect(document.querySelector('#inbox-title').textContent).toBe('Work');
+    });
+
+    it('onSetTaskArea triggers command and refreshes inbox on success', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await capturedOptions.onSetTaskArea('t1', 'work');
+        await flushAsyncWork();
+
+        expect(setTaskAreaMock).toHaveBeenCalledWith('t1', 'work');
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThan(initialListCalls);
+        expect(renderInboxProjectionMock.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('onSetTaskArea shows area feedback and does not refresh when blocked', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        setTaskAreaMock.mockResolvedValueOnce({
+            ok: false,
+            code: 'INVALID_AREA',
+            message: 'Invalid area. Choose an existing area.',
+        });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await capturedOptions.onSetTaskArea('t1', 'unknown');
+        await flushAsyncWork();
+
+        const areaFeedback = document.querySelector('#area-feedback');
+        expect(areaFeedback.textContent).toBe('Invalid area. Choose an existing area.');
+        expect(areaFeedback.classList.contains('hidden')).toBe(false);
+        expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
     });
 });

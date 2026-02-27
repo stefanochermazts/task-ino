@@ -3,6 +3,7 @@ import {
     getInboxTask,
     removeTaskFromToday,
     saveInboxTask,
+    setTaskArea,
     setTaskPaused,
 } from './inboxTaskStore';
 
@@ -180,5 +181,55 @@ describe('inboxTaskStore closure mutations', () => {
 
         const result = await setTaskPaused('t-paused');
         expect(result).toEqual({ ok: false, code: 'REMOVE_TASK_NOT_IN_TODAY' });
+    });
+
+    it('setTaskArea sets area and persists update', async () => {
+        const baseTask = {
+            id: 't-area',
+            title: 'Assign area',
+            createdAt: '2026-02-23T13:00:00.000Z',
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await setTaskArea('t-area', 'work');
+
+        expect(result.ok).toBe(true);
+        expect(result.task.area).toBe('work');
+        expect(typeof result.task.updatedAt).toBe('string');
+
+        const persisted = await getInboxTask('t-area');
+        expect(persisted.area).toBe('work');
+        expect(persisted.updatedAt).toBe(result.task.updatedAt);
+    });
+
+    it('setTaskArea normalizes area to lowercase', async () => {
+        const baseTask = {
+            id: 't-area2',
+            title: 'Assign area',
+            createdAt: '2026-02-23T13:00:00.000Z',
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await setTaskArea('t-area2', '  Work  ');
+
+        expect(result.ok).toBe(true);
+        expect(result.task.area).toBe('work');
+    });
+
+    it('setTaskArea returns TASK_NOT_FOUND when task is missing', async () => {
+        const result = await setTaskArea('missing-id', 'work');
+        expect(result).toEqual({ ok: false, code: 'TASK_NOT_FOUND' });
+    });
+
+    it('setTaskArea returns INVALID_AREA when areaId is empty', async () => {
+        const baseTask = {
+            id: 't-area3',
+            title: 'Task',
+            createdAt: '2026-02-23T13:00:00.000Z',
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await setTaskArea('t-area3', '');
+        expect(result).toEqual({ ok: false, code: 'INVALID_AREA' });
     });
 });

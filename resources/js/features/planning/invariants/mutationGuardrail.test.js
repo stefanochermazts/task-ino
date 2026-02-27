@@ -5,6 +5,7 @@ import {
     TASK_NOT_FOUND,
     REMOVE_TASK_NOT_IN_TODAY,
     INVARIANT_VIOLATION,
+    INVALID_AREA,
 } from './mutationGuardrail';
 
 const addTaskToTodayWithCapMock = vi.fn();
@@ -12,6 +13,8 @@ const swapTasksInTodayMock = vi.fn();
 const bulkAddTasksToTodayMock = vi.fn();
 const removeTaskFromTodayMock = vi.fn();
 const setTaskPausedMock = vi.fn();
+const setTaskAreaInStoreMock = vi.fn();
+const isValidAreaMock = vi.fn();
 
 vi.mock('../persistence/todayCapStore', () => ({
     readTodayCap: () => 3,
@@ -24,11 +27,17 @@ vi.mock('../persistence/inboxTaskStore', () => ({
     bulkAddTasksToToday: (taskIds, cap) => bulkAddTasksToTodayMock(taskIds, cap),
     removeTaskFromToday: (taskId) => removeTaskFromTodayMock(taskId),
     setTaskPaused: (taskId) => setTaskPausedMock(taskId),
+    setTaskArea: (taskId, area) => setTaskAreaInStoreMock(taskId, area),
+}));
+
+vi.mock('../persistence/areaStore', () => ({
+    isValidArea: (areaId) => isValidAreaMock(areaId),
 }));
 
 describe('mutationGuardrail', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        isValidAreaMock.mockReturnValue(true);
     });
 
     describe('addToToday action', () => {
@@ -322,6 +331,88 @@ describe('mutationGuardrail', () => {
             setTaskPausedMock.mockRejectedValue(new Error('db error'));
 
             const result = await mutatePlanningState('pauseTask', { taskId: 't1' });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+        });
+    });
+
+    describe('setTaskArea action', () => {
+        it('returns success when persistence succeeds', async () => {
+            setTaskAreaInStoreMock.mockResolvedValue({
+                ok: true,
+                task: { id: 't1', area: 'work', updatedAt: '2026-02-23T14:00:00.000Z' },
+            });
+
+            const result = await mutatePlanningState('setTaskArea', {
+                taskId: 't1',
+                areaId: 'work',
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.task.area).toBe('work');
+            expect(isValidAreaMock).toHaveBeenCalledWith('work');
+            expect(setTaskAreaInStoreMock).toHaveBeenCalledWith('t1', 'work');
+        });
+
+        it('returns INVALID_AREA when area is not valid', async () => {
+            isValidAreaMock.mockReturnValue(false);
+
+            const result = await mutatePlanningState('setTaskArea', {
+                taskId: 't1',
+                areaId: 'unknown',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVALID_AREA);
+            expect(result.message).toBe('Invalid area. Choose an existing area.');
+            expect(setTaskAreaInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns INVALID_AREA when areaId is empty', async () => {
+            const result = await mutatePlanningState('setTaskArea', {
+                taskId: 't1',
+                areaId: '',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVALID_AREA);
+            expect(setTaskAreaInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns TASK_NOT_FOUND with explicit code when task missing', async () => {
+            setTaskAreaInStoreMock.mockResolvedValue({
+                ok: false,
+                code: 'TASK_NOT_FOUND',
+            });
+
+            const result = await mutatePlanningState('setTaskArea', {
+                taskId: 'missing',
+                areaId: 'work',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(TASK_NOT_FOUND);
+        });
+
+        it('rejects invalid taskId with INVARIANT_VIOLATION', async () => {
+            const result = await mutatePlanningState('setTaskArea', {
+                taskId: '',
+                areaId: 'work',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(setTaskAreaInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns INVARIANT_VIOLATION when persistence throws', async () => {
+            setTaskAreaInStoreMock.mockRejectedValue(new Error('db error'));
+
+            const result = await mutatePlanningState('setTaskArea', {
+                taskId: 't1',
+                areaId: 'work',
+            });
 
             expect(result.ok).toBe(false);
             expect(result.code).toBe(INVARIANT_VIOLATION);

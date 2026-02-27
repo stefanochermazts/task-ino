@@ -3,7 +3,9 @@ import { bulkAddToToday } from '../commands/bulkAddToToday';
 import { createInboxTask } from '../commands/createInboxTask';
 import { removeFromToday } from '../commands/removeFromToday';
 import { pauseTask } from '../commands/pauseTask';
+import { setTaskArea } from '../commands/setTaskArea';
 import { listInboxTasks } from '../persistence/inboxTaskStore';
+import { listAreas, addArea } from '../persistence/areaStore';
 import { readTodayCap, saveTodayCap } from '../persistence/todayCapStore';
 import { computeTodayProjection, isValidTaskRecord } from '../projections/computeTodayProjection';
 import { renderInboxProjection } from '../projections/renderInboxProjection';
@@ -24,6 +26,15 @@ function clearPlanningProjectionUi(ui) {
         ui.reviewError.textContent = '';
         ui.reviewError.classList.add('hidden');
     }
+    if (ui.addAreaPanel) ui.addAreaPanel.classList.add('hidden');
+    if (ui.addAreaError) {
+        ui.addAreaError.textContent = '';
+        ui.addAreaError.classList.add('hidden');
+    }
+    if (ui.areaFeedback) {
+        ui.areaFeedback.textContent = '';
+        ui.areaFeedback.classList.add('hidden');
+    }
 }
 
 function readUi(root) {
@@ -36,6 +47,15 @@ function readUi(root) {
         list: root.querySelector('#inbox-list'),
         empty: root.querySelector('#inbox-empty'),
         count: root.querySelector('#inbox-count'),
+        areaSelector: root.querySelector('#area-selector'),
+        addAreaBtn: root.querySelector('#add-area-btn'),
+        addAreaPanel: root.querySelector('#add-area-panel'),
+        addAreaInput: root.querySelector('#add-area-input'),
+        addAreaError: root.querySelector('#add-area-error'),
+        addAreaConfirm: root.querySelector('#add-area-confirm'),
+        addAreaCancel: root.querySelector('#add-area-cancel'),
+        areaFeedback: root.querySelector('#area-feedback'),
+        inboxTitle: root.querySelector('#inbox-title'),
         todayList: root.querySelector('#today-list'),
         todayEmpty: root.querySelector('#today-empty'),
         todayCount: root.querySelector('#today-count'),
@@ -78,6 +98,26 @@ export function initializePlanningInboxApp(doc) {
     const ui = readUi(root);
     let captureInProgress = false;
     let pendingAddTaskId = null;
+    let selectedArea = 'inbox';
+
+    function syncAreaSelector() {
+        if (!ui.areaSelector) return;
+        const areas = listAreas();
+        const current = ui.areaSelector.value;
+        ui.areaSelector.innerHTML = '';
+        for (const a of areas) {
+            const opt = document.createElement('option');
+            opt.value = a;
+            opt.textContent = a === 'inbox' ? 'Inbox' : a.charAt(0).toUpperCase() + a.slice(1);
+            ui.areaSelector.appendChild(opt);
+        }
+        if (areas.includes(current)) {
+            ui.areaSelector.value = current;
+        } else {
+            ui.areaSelector.value = 'inbox';
+            selectedArea = 'inbox';
+        }
+    }
 
     const refreshInbox = async () => {
         const tasks = await listInboxTasks();
@@ -106,7 +146,28 @@ export function initializePlanningInboxApp(doc) {
             }
             return result;
         };
-        renderInboxProjection(safeTasks, ui, { onAddToToday, onBulkAddToToday });
+        const onSetTaskArea = async (taskId, areaId) => {
+            if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = '';
+                ui.areaFeedback.classList.add('hidden');
+            }
+            const result = await setTaskArea(taskId, areaId);
+            if (result.ok) {
+                await refreshInbox();
+            } else if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = result.message || 'Unable to change area.';
+                ui.areaFeedback.classList.remove('hidden');
+            }
+            return result;
+        };
+        const areaTasks = safeTasks.filter((t) => (t.area ?? 'inbox').toLowerCase() === selectedArea);
+        renderInboxProjection(areaTasks, ui, {
+            onAddToToday,
+            onBulkAddToToday,
+            onSetTaskArea,
+            selectedArea,
+            areas: listAreas(),
+        });
         const todayProjection = computeTodayProjection({
             tasks: safeTasks,
             todayCap: readTodayCap(),
@@ -160,6 +221,10 @@ export function initializePlanningInboxApp(doc) {
 
     async function updateClosurePanel(cachedSafeTasks) {
         if (!ui.closurePanel || !ui.closureItemList || !ui.closureCompleteMsg) return;
+        if (ui.closureError) {
+            ui.closureError.textContent = '';
+            ui.closureError.classList.add('hidden');
+        }
         let safeTasks;
         if (cachedSafeTasks !== undefined) {
             safeTasks = cachedSafeTasks;
@@ -206,25 +271,33 @@ export function initializePlanningInboxApp(doc) {
                 deferBtn.addEventListener('click', async () => {
                     const taskId = deferBtn.dataset.taskId;
                     if (!taskId) return;
-                    if (ui.closureError) ui.closureError.textContent = '';
+                    if (ui.closureError) {
+                        ui.closureError.textContent = '';
+                        ui.closureError.classList.add('hidden');
+                    }
                     const result = await removeFromToday(taskId);
                     if (result.ok) {
                         const updatedTasks = await refreshInbox();
                         await updateClosurePanel(updatedTasks);
                     } else if (ui.closureError) {
                         ui.closureError.textContent = result.message || 'Unable to defer.';
+                        ui.closureError.classList.remove('hidden');
                     }
                 });
                 pauseBtn.addEventListener('click', async () => {
                     const taskId = pauseBtn.dataset.taskId;
                     if (!taskId) return;
-                    if (ui.closureError) ui.closureError.textContent = '';
+                    if (ui.closureError) {
+                        ui.closureError.textContent = '';
+                        ui.closureError.classList.add('hidden');
+                    }
                     const result = await pauseTask(taskId);
                     if (result.ok) {
                         const updatedTasks = await refreshInbox();
                         await updateClosurePanel(updatedTasks);
                     } else if (ui.closureError) {
                         ui.closureError.textContent = result.message || 'Unable to pause.';
+                        ui.closureError.classList.remove('hidden');
                     }
                 });
                 btnGroup.appendChild(deferBtn);
@@ -272,12 +345,33 @@ export function initializePlanningInboxApp(doc) {
     function showClosurePanel() {
         if (!ui.closurePanel || !ui.closureCancelBtn) return;
         ui.closurePanel.classList.remove('hidden');
+        if (ui.closureError) {
+            ui.closureError.textContent = '';
+            ui.closureError.classList.add('hidden');
+        }
         ui.closureCancelBtn.onclick = () => {
             ui.closurePanel.classList.add('hidden');
+            if (ui.closureError) {
+                ui.closureError.textContent = '';
+                ui.closureError.classList.add('hidden');
+            }
         };
-        updateClosurePanel().catch(() => {
-            if (ui.closureError) ui.closureError.textContent = 'Unable to load closure items. Please retry.';
-        });
+        updateClosurePanel()
+            .then(() => {
+                const firstDecisionBtn = ui.closureItemList?.querySelector('.defer-btn, .pause-btn');
+                if (firstDecisionBtn) {
+                    firstDecisionBtn.focus();
+                } else {
+                    ui.closureCancelBtn.focus();
+                }
+            })
+            .catch(() => {
+                if (ui.closureError) {
+                    ui.closureError.textContent = 'Unable to load closure items. Please retry.';
+                    ui.closureError.classList.remove('hidden');
+                }
+                ui.closureCancelBtn.focus();
+            });
     }
 
     if (ui.closeDayBtn) {
@@ -303,6 +397,79 @@ export function initializePlanningInboxApp(doc) {
             if (ui.reviewError) {
                 ui.reviewError.textContent = '';
                 ui.reviewError.classList.add('hidden');
+            }
+        });
+    }
+
+    syncAreaSelector();
+
+    if (ui.areaSelector) {
+        ui.areaSelector.addEventListener('change', () => {
+            selectedArea = ui.areaSelector.value || 'inbox';
+            if (ui.inboxTitle) {
+                ui.inboxTitle.textContent =
+                    selectedArea === 'inbox' ? 'Inbox' : selectedArea.charAt(0).toUpperCase() + selectedArea.slice(1);
+            }
+            refreshInbox().catch(() => {
+                if (ui.areaFeedback) {
+                    ui.areaFeedback.textContent = 'Unable to load tasks.';
+                    ui.areaFeedback.classList.remove('hidden');
+                }
+            });
+        });
+    }
+
+    if (ui.addAreaBtn && ui.addAreaPanel) {
+        ui.addAreaBtn.addEventListener('click', () => {
+            ui.addAreaPanel.classList.remove('hidden');
+            if (ui.addAreaError) {
+                ui.addAreaError.textContent = '';
+                ui.addAreaError.classList.add('hidden');
+            }
+            if (ui.addAreaInput) {
+                ui.addAreaInput.value = '';
+                ui.addAreaInput.focus();
+            }
+        });
+    }
+
+    if (ui.addAreaCancel) {
+        ui.addAreaCancel.addEventListener('click', () => {
+            if (ui.addAreaPanel) ui.addAreaPanel.classList.add('hidden');
+            if (ui.addAreaError) {
+                ui.addAreaError.textContent = '';
+                ui.addAreaError.classList.add('hidden');
+            }
+        });
+    }
+
+    if (ui.addAreaConfirm && ui.addAreaInput) {
+        ui.addAreaConfirm.addEventListener('click', () => {
+            if (!ui.addAreaError) return;
+            ui.addAreaError.textContent = '';
+            ui.addAreaError.classList.add('hidden');
+            const name = String(ui.addAreaInput.value ?? '').trim().toLowerCase();
+            if (name.length === 0) {
+                ui.addAreaError.textContent = 'Enter an area name.';
+                ui.addAreaError.classList.remove('hidden');
+                return;
+            }
+            const result = addArea(name);
+            if (result.ok) {
+                if (ui.addAreaPanel) ui.addAreaPanel.classList.add('hidden');
+                syncAreaSelector();
+                selectedArea = name;
+                if (ui.areaSelector) ui.areaSelector.value = name;
+                if (ui.inboxTitle) ui.inboxTitle.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+                refreshInbox().catch(() => {});
+            } else {
+                ui.addAreaError.textContent =
+                    result.code === 'INBOX_IMMUTABLE'
+                        ? 'Inbox is a reserved area.'
+                        : result.code === 'SAVE_FAILED'
+                          ? 'Unable to save area.'
+                          : 'Invalid area name.';
+                ui.addAreaError.classList.remove('hidden');
             }
         });
     }

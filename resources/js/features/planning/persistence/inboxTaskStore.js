@@ -244,6 +244,34 @@ export async function removeTaskFromToday(taskId) {
     });
 }
 
+export async function setTaskArea(taskId, areaId) {
+    const area = String(areaId ?? '').trim().toLowerCase();
+    if (area.length === 0) {
+        return { ok: false, code: 'INVALID_AREA' };
+    }
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const getRequest = store.get(taskId);
+            getRequest.onsuccess = () => {
+                const task = getRequest.result ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                const updated = {
+                    ...task,
+                    area,
+                    updatedAt: new Date().toISOString(),
+                };
+                const putRequest = store.put(updated);
+                putRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                putRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            getRequest.onerror = () => reject(new Error('Unable to load task.'));
+        });
+    });
+}
+
 export async function setTaskPaused(taskId) {
     return runTransaction('readwrite', (store) => {
         return new Promise((resolve, reject) => {

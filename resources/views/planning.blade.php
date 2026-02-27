@@ -56,9 +56,58 @@
                 </section>
 
                 <section aria-labelledby="inbox-title">
-                    <div class="mb-2 flex items-center justify-between">
-                        <h2 id="inbox-title" class="text-lg font-medium">Inbox</h2>
+                    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                            <h2 id="inbox-title" class="text-lg font-medium">Inbox</h2>
+                            <select
+                                id="area-selector"
+                                aria-label="Filter by area"
+                                class="rounded border border-slate-300 bg-white px-2 py-1 text-sm outline-none ring-blue-600 focus:ring-2"
+                            >
+                                <!-- Options populated by JS from areaStore -->
+                            </select>
+                            <button
+                                type="button"
+                                id="add-area-btn"
+                                class="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                                aria-label="Add new area"
+                            >
+                                + Add area
+                            </button>
+                        </div>
                         <span id="inbox-count" class="text-xs text-slate-500">0 tasks</span>
+                    </div>
+                    <p id="area-feedback" class="mb-2 hidden text-sm text-red-600" aria-live="polite"></p>
+                    <div
+                        id="add-area-panel"
+                        class="mb-3 hidden rounded-lg border border-slate-200 bg-slate-50 p-3"
+                        role="region"
+                        aria-label="Add new area"
+                    >
+                        <label for="add-area-input" class="text-sm font-medium text-slate-700">New area name</label>
+                        <input
+                            id="add-area-input"
+                            type="text"
+                            placeholder="e.g. personal"
+                            class="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-blue-600 focus:ring-2"
+                        >
+                        <p id="add-area-error" class="mt-2 hidden text-sm text-red-600" aria-live="polite"></p>
+                        <div class="mt-2 flex gap-2">
+                            <button
+                                type="button"
+                                id="add-area-confirm"
+                                class="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm text-emerald-800 hover:bg-emerald-100"
+                            >
+                                Add
+                            </button>
+                            <button
+                                type="button"
+                                id="add-area-cancel"
+                                class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                            >
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                     <ul id="inbox-list" class="space-y-2" aria-live="polite"></ul>
                     <p id="inbox-empty" class="rounded-md border border-dashed border-slate-300 p-3 text-sm text-slate-500">
