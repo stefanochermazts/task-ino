@@ -56,9 +56,58 @@
                 </section>
 
                 <section aria-labelledby="inbox-title">
-                    <div class="mb-2 flex items-center justify-between">
-                        <h2 id="inbox-title" class="text-lg font-medium">Inbox</h2>
+                    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                            <h2 id="inbox-title" class="text-lg font-medium">Inbox</h2>
+                            <select
+                                id="area-selector"
+                                aria-label="Filter by area"
+                                class="rounded border border-slate-300 bg-white px-2 py-1 text-sm outline-none ring-blue-600 focus:ring-2"
+                            >
+                                <!-- Options populated by JS from areaStore -->
+                            </select>
+                            <button
+                                type="button"
+                                id="add-area-btn"
+                                class="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                                aria-label="Add new area"
+                            >
+                                + Add area
+                            </button>
+                        </div>
                         <span id="inbox-count" class="text-xs text-slate-500">0 tasks</span>
+                    </div>
+                    <p id="area-feedback" class="mb-2 hidden text-sm text-red-600" aria-live="polite"></p>
+                    <div
+                        id="add-area-panel"
+                        class="mb-3 hidden rounded-lg border border-slate-200 bg-slate-50 p-3"
+                        role="region"
+                        aria-label="Add new area"
+                    >
+                        <label for="add-area-input" class="text-sm font-medium text-slate-700">New area name</label>
+                        <input
+                            id="add-area-input"
+                            type="text"
+                            placeholder="e.g. personal"
+                            class="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-blue-600 focus:ring-2"
+                        >
+                        <p id="add-area-error" class="mt-2 hidden text-sm text-red-600" aria-live="polite"></p>
+                        <div class="mt-2 flex gap-2">
+                            <button
+                                type="button"
+                                id="add-area-confirm"
+                                class="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm text-emerald-800 hover:bg-emerald-100"
+                            >
+                                Add
+                            </button>
+                            <button
+                                type="button"
+                                id="add-area-cancel"
+                                class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                            >
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                     <ul id="inbox-list" class="space-y-2" aria-live="polite"></ul>
                     <p id="inbox-empty" class="rounded-md border border-dashed border-slate-300 p-3 text-sm text-slate-500">
@@ -69,7 +118,25 @@
                 <section aria-labelledby="today-title" class="mt-6">
                     <div class="mb-2 flex items-center justify-between">
                         <h2 id="today-title" class="text-lg font-medium">Today</h2>
-                        <span id="today-count" class="text-xs text-slate-500">0/3 selected</span>
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                id="review-plan-btn"
+                                class="rounded border border-blue-300 bg-white px-3 py-1 text-sm text-blue-800 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                aria-label="Review current plan before execution"
+                            >
+                                Review Plan
+                            </button>
+                            <button
+                                type="button"
+                                id="close-day-btn"
+                                class="rounded border border-violet-300 bg-white px-3 py-1 text-sm text-violet-800 hover:bg-violet-50 focus:outline-none focus:ring-2 focus:ring-violet-600"
+                                aria-label="Initiate end-of-day closure"
+                            >
+                                Close Day
+                            </button>
+                            <span id="today-count" class="text-xs text-slate-500">0/3 selected</span>
+                        </div>
                     </div>
                     <div class="mb-2 flex flex-wrap items-center gap-2">
                         <label for="today-cap-input" class="text-xs text-slate-500">Cap</label>
@@ -107,6 +174,44 @@
                             class="mt-2 rounded border border-amber-300 px-2 py-1 text-sm text-amber-900 hover:bg-amber-100"
                         >
                             Cancel
+                        </button>
+                    </div>
+                    <div
+                        id="closure-panel"
+                        class="mt-4 hidden rounded-md border border-violet-200 bg-violet-50 p-4"
+                        role="region"
+                        aria-label="Day closure"
+                    >
+                        <h3 class="mb-2 text-sm font-semibold text-violet-900">Decide where each item goes</h3>
+                        <ul id="closure-item-list" class="space-y-2"></ul>
+                        <p id="closure-complete-msg" class="mt-3 hidden text-sm font-medium text-violet-900">Day closed. Well done.</p>
+                        <p id="closure-error" class="mt-2 hidden text-sm text-red-600" aria-live="polite"></p>
+                        <button
+                            type="button"
+                            id="closure-cancel-btn"
+                            class="mt-3 rounded border border-violet-200 bg-white px-3 py-1 text-sm text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-600"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                    <div
+                        id="review-panel"
+                        class="mt-4 hidden rounded-md border border-blue-200 bg-blue-50 p-4"
+                        role="region"
+                        aria-label="Plan review"
+                    >
+                        <h3 class="mb-2 text-sm font-semibold text-blue-900">Your plan for today</h3>
+                        <ul id="review-item-list" class="space-y-2"></ul>
+                        <p id="review-cap-status" class="mt-2 text-sm text-blue-800"></p>
+                        <p id="review-closure-state" class="mt-1 text-sm text-blue-800"></p>
+                        <p id="review-error" class="mt-2 hidden text-sm text-red-600" aria-live="polite"></p>
+                        <button
+                            type="button"
+                            id="review-confirm-btn"
+                            class="mt-3 rounded border border-blue-200 bg-white px-3 py-1 text-sm text-blue-700 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                            aria-label="Confirm plan readiness"
+                        >
+                            Ready to execute
                         </button>
                     </div>
                 </section>

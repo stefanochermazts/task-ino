@@ -102,6 +102,70 @@ export async function addTaskToTodayWithCap(taskId, todayCap) {
     });
 }
 
+export async function bulkAddTasksToToday(taskIds, todayCap) {
+    const ids = Array.isArray(taskIds) ? [...taskIds] : [];
+    if (ids.length === 0) {
+        return { ok: false, code: 'INVARIANT_VIOLATION' };
+    }
+
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const listRequest = store.getAll();
+            listRequest.onsuccess = () => {
+                const tasks = Array.isArray(listRequest.result) ? listRequest.result : [];
+                const cap = Number.parseInt(String(todayCap ?? ''), 10);
+                const validCap = Number.isFinite(cap) && cap > 0 ? cap : 3;
+
+                const toAdd = [];
+                for (const id of ids) {
+                    const task = tasks.find((item) => item?.id === id) ?? null;
+                    if (!task) {
+                        resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                        return;
+                    }
+                    if (task.todayIncluded === true) {
+                        continue;
+                    }
+                    toAdd.push(task);
+                }
+
+                const currentTodayCount = tasks.filter((item) => item?.todayIncluded === true).length;
+                if (currentTodayCount + toAdd.length > validCap) {
+                    resolve({ ok: false, code: 'TODAY_CAP_EXCEEDED' });
+                    return;
+                }
+
+                const nowIso = new Date().toISOString();
+                const updates = toAdd.map((t) => ({
+                    ...t,
+                    todayIncluded: true,
+                    updatedAt: nowIso,
+                }));
+
+                let writesDone = 0;
+                const total = updates.length;
+                const onWriteSuccess = () => {
+                    writesDone += 1;
+                    if (writesDone === total) {
+                        resolve({ ok: true });
+                    }
+                };
+
+                for (const u of updates) {
+                    const req = store.put(u);
+                    req.onsuccess = onWriteSuccess;
+                    req.onerror = () => reject(new Error('Unable to save task.'));
+                }
+
+                if (total === 0) {
+                    resolve({ ok: true });
+                }
+            };
+            listRequest.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
 export async function swapTasksInToday(addTaskId, removeTaskId) {
     return runTransaction('readwrite', (store) => {
         return new Promise((resolve, reject) => {
@@ -148,6 +212,91 @@ export async function swapTasksInToday(addTaskId, removeTaskId) {
                 addRequest.onerror = () => reject(new Error('Unable to save task.'));
             };
             listRequest.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
+export async function removeTaskFromToday(taskId) {
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const getRequest = store.get(taskId);
+            getRequest.onsuccess = () => {
+                const task = getRequest.result ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                if (task.todayIncluded !== true) {
+                    resolve({ ok: false, code: 'REMOVE_TASK_NOT_IN_TODAY' });
+                    return;
+                }
+                const updated = {
+                    ...task,
+                    todayIncluded: false,
+                    updatedAt: new Date().toISOString(),
+                };
+                const putRequest = store.put(updated);
+                putRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                putRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            getRequest.onerror = () => reject(new Error('Unable to load task.'));
+        });
+    });
+}
+
+export async function setTaskArea(taskId, areaId) {
+    const area = String(areaId ?? '').trim().toLowerCase();
+    if (area.length === 0) {
+        return { ok: false, code: 'INVALID_AREA' };
+    }
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const getRequest = store.get(taskId);
+            getRequest.onsuccess = () => {
+                const task = getRequest.result ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                const updated = {
+                    ...task,
+                    area,
+                    updatedAt: new Date().toISOString(),
+                };
+                const putRequest = store.put(updated);
+                putRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                putRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            getRequest.onerror = () => reject(new Error('Unable to load task.'));
+        });
+    });
+}
+
+export async function setTaskPaused(taskId) {
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const getRequest = store.get(taskId);
+            getRequest.onsuccess = () => {
+                const task = getRequest.result ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                if (task.todayIncluded !== true) {
+                    resolve({ ok: false, code: 'REMOVE_TASK_NOT_IN_TODAY' });
+                    return;
+                }
+                const updated = {
+                    ...task,
+                    todayIncluded: false,
+                    status: 'paused',
+                    updatedAt: new Date().toISOString(),
+                };
+                const putRequest = store.put(updated);
+                putRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                putRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            getRequest.onerror = () => reject(new Error('Unable to load task.'));
         });
     });
 }

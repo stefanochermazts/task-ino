@@ -1,28 +1,15 @@
-import {
-    addTaskToTodayWithCap,
-    swapTasksInToday,
-} from '../persistence/inboxTaskStore';
-import { readTodayCap } from '../persistence/todayCapStore';
+import { mutatePlanningState } from '../invariants/mutationGuardrail';
 
+/**
+ * Add a single task to Today. Routes through centralized mutation guardrail.
+ */
 export async function addToToday(taskId) {
-    const cap = readTodayCap();
-    try {
-        return await addTaskToTodayWithCap(taskId, cap);
-    } catch (_error) {
-        return {
-            ok: false,
-            message: 'Unable to save task locally. Please retry.',
-        };
-    }
+    return mutatePlanningState('addToToday', { taskId });
 }
 
+/**
+ * Swap one task into Today and one out. Routes through centralized mutation guardrail.
+ */
 export async function swapToToday(addTaskId, removeTaskId) {
-    try {
-        return await swapTasksInToday(addTaskId, removeTaskId);
-    } catch (_error) {
-        return {
-            ok: false,
-            message: 'Unable to save task locally. Please retry.',
-        };
-    }
+    return mutatePlanningState('swapToToday', { addTaskId, removeTaskId });
 }
