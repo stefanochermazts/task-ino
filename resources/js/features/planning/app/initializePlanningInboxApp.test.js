@@ -11,9 +11,14 @@ const bulkAddToTodayMock = vi.fn();
 const removeFromTodayMock = vi.fn();
 const pauseTaskMock = vi.fn();
 const setTaskAreaMock = vi.fn();
+const rescheduleTaskMock = vi.fn();
 
 vi.mock('../commands/setTaskArea', () => ({
     setTaskArea: (...args) => setTaskAreaMock(...args),
+}));
+
+vi.mock('../commands/rescheduleTask', () => ({
+    rescheduleTask: (...args) => rescheduleTaskMock(...args),
 }));
 
 vi.mock('../commands/createInboxTask', () => ({
@@ -1214,5 +1219,118 @@ describe('initializePlanningInboxApp', () => {
         expect(latestProjection.items).toHaveLength(1);
         expect(latestProjection.items[0].id).toBe('t1');
         expect(latestProjection.items[0].area).toBe('work');
+    });
+
+    it('onRescheduleTask triggers command and refreshes inbox on success', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        rescheduleTaskMock.mockResolvedValue({ ok: true });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await capturedOptions.onRescheduleTask('t1', '2026-03-15');
+        await flushAsyncWork();
+
+        expect(rescheduleTaskMock).toHaveBeenCalledWith('t1', '2026-03-15');
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThan(initialListCalls);
+        expect(renderInboxProjectionMock.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('onRescheduleTask shows area feedback when invalid temporal target', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        rescheduleTaskMock.mockResolvedValueOnce({
+            ok: false,
+            code: 'INVALID_TEMPORAL_TARGET',
+            message: 'Invalid date. Use a valid date (YYYY-MM-DD).',
+        });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await capturedOptions.onRescheduleTask('t1', 'not-a-date');
+        await flushAsyncWork();
+
+        const areaFeedback = document.querySelector('#area-feedback');
+        expect(areaFeedback.textContent).toBe('Invalid date. Use a valid date (YYYY-MM-DD).');
+        expect(areaFeedback.classList.contains('hidden')).toBe(false);
+        expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
+    });
+
+    it('renderInboxProjection receives onRescheduleTask callback', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const lastCall = renderInboxProjectionMock.mock.calls.at(-1);
+        const options = lastCall[2];
+        expect(options.onRescheduleTask).toBeDefined();
+        expect(typeof options.onRescheduleTask).toBe('function');
+    });
+
+    it('reschedule does not alter area or Today membership (regression)', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: true, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        const updatedTasks = [
+            {
+                id: 't1',
+                title: 'Task 1',
+                todayIncluded: true,
+                area: 'inbox',
+                scheduledFor: '2026-03-20',
+                createdAt: '2026-02-24T08:00:00.000Z',
+            },
+        ];
+        listInboxTasksMock.mockResolvedValueOnce(tasks).mockResolvedValueOnce(updatedTasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        rescheduleTaskMock.mockResolvedValue({ ok: true, task: updatedTasks[0] });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        await capturedOptions.onRescheduleTask('t1', '2026-03-20');
+        await flushAsyncWork();
+
+        expect(rescheduleTaskMock).toHaveBeenCalledWith('t1', '2026-03-20');
+        const lastProjectionTasks = renderInboxProjectionMock.mock.calls.at(-1)[0];
+        const task = lastProjectionTasks.find((t) => t.id === 't1');
+        expect(task).toBeDefined();
+        expect(task.area).toBe('inbox');
+        expect(task.todayIncluded).toBe(true);
     });
 });

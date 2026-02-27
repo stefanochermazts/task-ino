@@ -150,4 +150,64 @@ describe('renderInboxProjection', () => {
 
         expect(onSetTaskArea).not.toHaveBeenCalled();
     });
+
+    it('renders reschedule date input when onRescheduleTask provided', () => {
+        const ui = buildUi();
+        const onRescheduleTask = vi.fn();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false }];
+
+        renderInboxProjection(tasks, ui, { onRescheduleTask });
+
+        const input = ui.list.querySelector('input[type="date"][aria-label="Reschedule Task 1"]');
+        expect(input).not.toBeNull();
+        expect(input.value).toBe('');
+    });
+
+    it('renders scheduledFor in date input when task has scheduledFor', () => {
+        const ui = buildUi();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false, scheduledFor: '2026-03-15' }];
+
+        renderInboxProjection(tasks, ui, { onRescheduleTask: () => {} });
+
+        const input = ui.list.querySelector('input[type="date"]');
+        expect(input.value).toBe('2026-03-15');
+    });
+
+    it('calls onRescheduleTask with task id and date when date input changes', () => {
+        const ui = buildUi();
+        const onRescheduleTask = vi.fn();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false }];
+
+        renderInboxProjection(tasks, ui, { onRescheduleTask });
+
+        const input = ui.list.querySelector('input[type="date"]');
+        input.value = '2026-03-20';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(onRescheduleTask).toHaveBeenCalledWith('t1', '2026-03-20');
+    });
+
+    it('calls onRescheduleTask with null when date cleared', () => {
+        const ui = buildUi();
+        const onRescheduleTask = vi.fn();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false, scheduledFor: '2026-03-15' }];
+
+        renderInboxProjection(tasks, ui, { onRescheduleTask });
+
+        const input = ui.list.querySelector('input[type="date"]');
+        input.value = '';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(onRescheduleTask).toHaveBeenCalledWith('t1', null);
+    });
+
+    it('does not render reschedule input when onRescheduleTask not provided', () => {
+        const ui = buildUi();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false }];
+
+        renderInboxProjection(tasks, ui);
+
+        const input = ui.list.querySelector('input[type="date"]');
+        expect(input).toBeNull();
+    });
 });

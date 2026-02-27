@@ -272,6 +272,38 @@ export async function setTaskArea(taskId, areaId) {
     });
 }
 
+/**
+ * Reschedule a task to a new temporal target.
+ * Updates only scheduledFor and updatedAt; preserves id, title, createdAt, area, todayIncluded.
+ *
+ * @param {string} taskId
+ * @param {string|null} scheduledFor - ISO date string (YYYY-MM-DD) or null to clear
+ * @returns {Promise<{ok: boolean, code?: string, task?: object}>}
+ */
+export async function rescheduleTask(taskId, scheduledFor) {
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const getRequest = store.get(taskId);
+            getRequest.onsuccess = () => {
+                const task = getRequest.result ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                const updated = {
+                    ...task,
+                    scheduledFor: scheduledFor ?? null,
+                    updatedAt: new Date().toISOString(),
+                };
+                const putRequest = store.put(updated);
+                putRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                putRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            getRequest.onerror = () => reject(new Error('Unable to load task.'));
+        });
+    });
+}
+
 export async function setTaskPaused(taskId) {
     return runTransaction('readwrite', (store) => {
         return new Promise((resolve, reject) => {

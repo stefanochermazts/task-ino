@@ -1,5 +1,5 @@
 export function renderInboxProjection(tasks, ui, options = {}) {
-    const { onAddToToday, onBulkAddToToday, onSetTaskArea, selectedArea, areas = [] } = options;
+    const { onAddToToday, onBulkAddToToday, onSetTaskArea, onRescheduleTask, selectedArea, areas = [] } = options;
     ui.list.innerHTML = '';
 
     const nonTodayTasks = tasks.filter((t) => !t.todayIncluded);
@@ -31,6 +31,12 @@ export function renderInboxProjection(tasks, ui, options = {}) {
         item.dataset.taskId = task.id;
         const titleSpan = document.createElement('span');
         titleSpan.textContent = task.title;
+        if (task.scheduledFor) {
+            const dateLabel = document.createElement('span');
+            dateLabel.className = 'ml-2 text-xs text-slate-500';
+            dateLabel.textContent = ` (${task.scheduledFor})`;
+            titleSpan.appendChild(dateLabel);
+        }
         item.appendChild(titleSpan);
         const actions = document.createElement('span');
         actions.className = 'flex shrink-0 items-center gap-2';
@@ -51,6 +57,19 @@ export function renderInboxProjection(tasks, ui, options = {}) {
                 if (newArea !== taskArea) onSetTaskArea(task.id, newArea);
             });
             actions.appendChild(areaSelect);
+        }
+        if (onRescheduleTask) {
+            const dateInput = document.createElement('input');
+            dateInput.type = 'date';
+            dateInput.className =
+                'rounded border border-slate-300 bg-white px-2 py-1 text-xs outline-none ring-blue-600 focus:ring-2';
+            dateInput.setAttribute('aria-label', `Reschedule ${task.title}`);
+            dateInput.value = task.scheduledFor ?? '';
+            dateInput.addEventListener('change', () => {
+                const val = dateInput.value;
+                onRescheduleTask(task.id, val || null);
+            });
+            actions.appendChild(dateInput);
         }
         if (onAddToToday && !task.todayIncluded) {
             const addBtn = document.createElement('button');

@@ -3,6 +3,7 @@ import {
     addTaskToTodayWithCap,
     getInboxTask,
     removeTaskFromToday,
+    rescheduleTask,
     saveInboxTask,
     setTaskArea,
     setTaskPaused,
@@ -311,5 +312,73 @@ describe('inboxTaskStore closure mutations', () => {
         const persisted = await getInboxTask('t-area-today');
         expect(persisted.todayIncluded).toBe(true);
         expect(persisted.area).toBe('work');
+    });
+
+    it('rescheduleTask updates scheduledFor and updatedAt, preserves id title createdAt area todayIncluded', async () => {
+        const baseTask = {
+            id: 't-reschedule',
+            title: 'Reschedule me',
+            createdAt: '2026-02-20T09:00:00.000Z',
+            area: 'work',
+            todayIncluded: true,
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await rescheduleTask('t-reschedule', '2026-03-01');
+
+        expect(result.ok).toBe(true);
+        expect(result.task.id).toBe('t-reschedule');
+        expect(result.task.title).toBe('Reschedule me');
+        expect(result.task.createdAt).toBe('2026-02-20T09:00:00.000Z');
+        expect(result.task.area).toBe('work');
+        expect(result.task.todayIncluded).toBe(true);
+        expect(result.task.scheduledFor).toBe('2026-03-01');
+        expect(typeof result.task.updatedAt).toBe('string');
+        const persisted = await getInboxTask('t-reschedule');
+        expect(persisted.scheduledFor).toBe('2026-03-01');
+        expect(persisted.createdAt).toBe('2026-02-20T09:00:00.000Z');
+        expect(persisted.area).toBe('work');
+    });
+
+    it('rescheduleTask with null clears scheduledFor', async () => {
+        const baseTask = {
+            id: 't-clear-sched',
+            title: 'Clear schedule',
+            createdAt: '2026-02-21T10:00:00.000Z',
+            scheduledFor: '2026-02-25',
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await rescheduleTask('t-clear-sched', null);
+
+        expect(result.ok).toBe(true);
+        expect(result.task.scheduledFor).toBeNull();
+        const persisted = await getInboxTask('t-clear-sched');
+        expect(persisted.scheduledFor).toBeNull();
+    });
+
+    it('rescheduleTask returns TASK_NOT_FOUND when task is missing', async () => {
+        const result = await rescheduleTask('missing-id', '2026-03-01');
+        expect(result).toEqual({ ok: false, code: 'TASK_NOT_FOUND' });
+    });
+
+    it('rescheduleTask does not alter area or todayIncluded (regression: reschedule is not move)', async () => {
+        const baseTask = {
+            id: 't-reschedule-indep',
+            title: 'Task',
+            createdAt: '2026-02-22T08:00:00.000Z',
+            area: 'work',
+            todayIncluded: true,
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await rescheduleTask('t-reschedule-indep', '2026-04-15');
+
+        expect(result.ok).toBe(true);
+        expect(result.task.area).toBe('work');
+        expect(result.task.todayIncluded).toBe(true);
+        const persisted = await getInboxTask('t-reschedule-indep');
+        expect(persisted.area).toBe('work');
+        expect(persisted.todayIncluded).toBe(true);
     });
 });

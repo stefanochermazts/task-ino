@@ -4,6 +4,7 @@ import { createInboxTask } from '../commands/createInboxTask';
 import { removeFromToday } from '../commands/removeFromToday';
 import { pauseTask } from '../commands/pauseTask';
 import { setTaskArea } from '../commands/setTaskArea';
+import { rescheduleTask } from '../commands/rescheduleTask';
 import { listInboxTasks } from '../persistence/inboxTaskStore';
 import { listAreas, addArea } from '../persistence/areaStore';
 import { readTodayCap, saveTodayCap } from '../persistence/todayCapStore';
@@ -160,11 +161,26 @@ export function initializePlanningInboxApp(doc) {
             }
             return result;
         };
+        const onRescheduleTask = async (taskId, scheduledFor) => {
+            if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = '';
+                ui.areaFeedback.classList.add('hidden');
+            }
+            const result = await rescheduleTask(taskId, scheduledFor);
+            if (result.ok) {
+                await refreshInbox();
+            } else if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = result.message || 'Invalid date. Use a valid date (YYYY-MM-DD).';
+                ui.areaFeedback.classList.remove('hidden');
+            }
+            return result;
+        };
         const areaTasks = safeTasks.filter((t) => (t.area ?? 'inbox').toLowerCase() === selectedArea);
         renderInboxProjection(areaTasks, ui, {
             onAddToToday,
             onBulkAddToToday,
             onSetTaskArea,
+            onRescheduleTask,
             selectedArea,
             areas: listAreas(),
         });

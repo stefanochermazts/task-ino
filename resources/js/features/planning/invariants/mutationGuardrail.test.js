@@ -6,6 +6,7 @@ import {
     REMOVE_TASK_NOT_IN_TODAY,
     INVARIANT_VIOLATION,
     INVALID_AREA,
+    INVALID_TEMPORAL_TARGET,
 } from './mutationGuardrail';
 
 const addTaskToTodayWithCapMock = vi.fn();
@@ -14,6 +15,7 @@ const bulkAddTasksToTodayMock = vi.fn();
 const removeTaskFromTodayMock = vi.fn();
 const setTaskPausedMock = vi.fn();
 const setTaskAreaInStoreMock = vi.fn();
+const rescheduleTaskInStoreMock = vi.fn();
 const isValidAreaMock = vi.fn();
 
 vi.mock('../persistence/todayCapStore', () => ({
@@ -28,6 +30,7 @@ vi.mock('../persistence/inboxTaskStore', () => ({
     removeTaskFromToday: (taskId) => removeTaskFromTodayMock(taskId),
     setTaskPaused: (taskId) => setTaskPausedMock(taskId),
     setTaskArea: (taskId, area) => setTaskAreaInStoreMock(taskId, area),
+    rescheduleTask: (taskId, scheduledFor) => rescheduleTaskInStoreMock(taskId, scheduledFor),
 }));
 
 vi.mock('../persistence/areaStore', () => ({
@@ -412,6 +415,88 @@ describe('mutationGuardrail', () => {
             const result = await mutatePlanningState('setTaskArea', {
                 taskId: 't1',
                 areaId: 'work',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+        });
+    });
+
+    describe('rescheduleTask action', () => {
+        it('returns success when persistence succeeds', async () => {
+            rescheduleTaskInStoreMock.mockResolvedValue({
+                ok: true,
+                task: { id: 't1', scheduledFor: '2026-03-01', updatedAt: '2026-02-23T15:00:00.000Z' },
+            });
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.task.scheduledFor).toBe('2026-03-01');
+            expect(rescheduleTaskInStoreMock).toHaveBeenCalledWith('t1', '2026-03-01');
+        });
+
+        it('rejects invalid temporal target and does not call persistence', async () => {
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: 'invalid-date-xyz',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVALID_TEMPORAL_TARGET);
+            expect(rescheduleTaskInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns TASK_NOT_FOUND with explicit code when task missing', async () => {
+            rescheduleTaskInStoreMock.mockResolvedValue({
+                ok: false,
+                code: 'TASK_NOT_FOUND',
+            });
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 'missing',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(TASK_NOT_FOUND);
+        });
+
+        it('rejects invalid taskId with INVARIANT_VIOLATION', async () => {
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: '',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(rescheduleTaskInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('accepts null to clear scheduledFor', async () => {
+            rescheduleTaskInStoreMock.mockResolvedValue({
+                ok: true,
+                task: { id: 't1', scheduledFor: null, updatedAt: '2026-02-23T15:00:00.000Z' },
+            });
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: null,
+            });
+
+            expect(result.ok).toBe(true);
+            expect(rescheduleTaskInStoreMock).toHaveBeenCalledWith('t1', null);
+        });
+
+        it('returns INVARIANT_VIOLATION when persistence throws', async () => {
+            rescheduleTaskInStoreMock.mockRejectedValue(new Error('db error'));
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: '2026-03-01',
             });
 
             expect(result.ok).toBe(false);
