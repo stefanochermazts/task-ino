@@ -18,9 +18,20 @@ export function renderTodayProjection(todayProjection, ui) {
 
     for (const task of items) {
         const item = document.createElement('li');
-        item.className = 'rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm';
+        item.className = 'flex items-center justify-between gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm';
         item.dataset.taskId = task.id;
-        item.textContent = task.title;
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = task.title;
+        item.appendChild(titleSpan);
+        const areaLabel = document.createElement('span');
+        const normalizedArea = String(task?.area ?? 'inbox').trim().toLowerCase() || 'inbox';
+        areaLabel.textContent =
+            normalizedArea === 'inbox'
+                ? 'Inbox'
+                : normalizedArea.charAt(0).toUpperCase() + normalizedArea.slice(1);
+        areaLabel.className = 'shrink-0 text-xs text-slate-500';
+        areaLabel.setAttribute('aria-label', `Area: ${areaLabel.textContent}`);
+        item.appendChild(areaLabel);
         ui.todayList.appendChild(item);
     }
 

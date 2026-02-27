@@ -53,7 +53,7 @@ development_status:
 
   epic-2: in-progress
   2-1-area-based-task-organization: done
-  2-2-cross-area-today-aggregation: backlog
+  2-2-cross-area-today-aggregation: done
   2-3-single-item-move-area-and-today-membership: backlog
   2-4-single-item-reschedule-temporal-context: backlog
   2-5-bulk-selection-and-atomic-reschedule: backlog

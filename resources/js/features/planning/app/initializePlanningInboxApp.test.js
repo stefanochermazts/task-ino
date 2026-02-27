@@ -1077,4 +1077,46 @@ describe('initializePlanningInboxApp', () => {
         expect(areaFeedback.classList.contains('hidden')).toBe(false);
         expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
     });
+
+    it('Today projection receives cross-area tasks and passes items with area to render', async () => {
+        const tasks = [
+            { id: 't1', title: 'Inbox task', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Work task', area: 'work', todayIncluded: true, createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const projectionArg = renderTodayProjectionMock.mock.calls[0][0];
+        expect(projectionArg.items).toHaveLength(2);
+        expect(projectionArg.items.map((i) => i.area)).toContain('inbox');
+        expect(projectionArg.items.map((i) => i.area)).toContain('work');
+    });
+
+    it('renders area origin in Today list through app integration flow', async () => {
+        const tasks = [
+            { id: 't1', title: 'Inbox task', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Work task', area: 'work', todayIncluded: true, createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        const { renderTodayProjection } = await vi.importActual('../projections/renderTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        renderTodayProjectionMock.mockImplementation((projection, ui) => renderTodayProjection(projection, ui));
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const todayList = document.querySelector('#today-list');
+        const renderedText = todayList.textContent;
+        expect(renderedText).toContain('Inbox task');
+        expect(renderedText).toContain('Work task');
+        expect(renderedText).toContain('Inbox');
+        expect(renderedText).toContain('Work');
+    });
 });
