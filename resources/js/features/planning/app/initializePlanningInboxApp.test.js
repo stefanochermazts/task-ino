@@ -232,7 +232,11 @@ describe('initializePlanningInboxApp', () => {
             tasks: expect.any(Array),
             todayCap: 3,
         });
-        expect(renderTodayProjectionMock).toHaveBeenCalledWith(todayProjection, expect.any(Object));
+        expect(renderTodayProjectionMock).toHaveBeenCalledWith(
+            todayProjection,
+            expect.any(Object),
+            expect.objectContaining({ onRemoveFromToday: expect.any(Function) }),
+        );
     });
 
     it('computes today projection from local state when offline', async () => {
@@ -1106,7 +1110,9 @@ describe('initializePlanningInboxApp', () => {
         const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
         const { renderTodayProjection } = await vi.importActual('../projections/renderTodayProjection');
         computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
-        renderTodayProjectionMock.mockImplementation((projection, ui) => renderTodayProjection(projection, ui));
+        renderTodayProjectionMock.mockImplementation((projection, ui, options) =>
+            renderTodayProjection(projection, ui, options),
+        );
 
         const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
         initializePlanningInboxApp(document);
@@ -1118,5 +1124,95 @@ describe('initializePlanningInboxApp', () => {
         expect(renderedText).toContain('Work task');
         expect(renderedText).toContain('Inbox');
         expect(renderedText).toContain('Work');
+    });
+
+    it('Remove from Today button calls removeFromToday and refreshes inbox', async () => {
+        const tasks = [
+            { id: 't1', title: 'In Today', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        removeFromTodayMock.mockResolvedValue({ ok: true });
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        const { renderTodayProjection } = await vi.importActual('../projections/renderTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        renderTodayProjectionMock.mockImplementation((projection, ui, options) =>
+            renderTodayProjection(projection, ui, options),
+        );
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const removeBtn = document.querySelector('[data-action="remove-from-today"]');
+        expect(removeBtn).not.toBeNull();
+        removeBtn.click();
+        await flushAsyncWork();
+
+        expect(removeFromTodayMock).toHaveBeenCalledWith('t1');
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Remove from Today shows feedback and does not refresh when mutation is blocked', async () => {
+        const tasks = [
+            { id: 't1', title: 'In Today', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        removeFromTodayMock.mockResolvedValueOnce({
+            ok: false,
+            code: 'REMOVE_TASK_NOT_IN_TODAY',
+            message: 'Selected item is not in Today.',
+        });
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        const { renderTodayProjection } = await vi.importActual('../projections/renderTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        renderTodayProjectionMock.mockImplementation((projection, ui, options) =>
+            renderTodayProjection(projection, ui, options),
+        );
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        const removeBtn = document.querySelector('[data-action="remove-from-today"]');
+        expect(removeBtn).not.toBeNull();
+        removeBtn.click();
+        await flushAsyncWork();
+
+        expect(removeFromTodayMock).toHaveBeenCalledWith('t1');
+        expect(document.querySelector('#quick-capture-feedback').textContent).toBe('Selected item is not in Today.');
+        expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
+    });
+
+    it('onSetTaskArea keeps Today membership unchanged in app integration flow', async () => {
+        const initialTasks = [
+            { id: 't1', title: 'Today task', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        const updatedTasks = [
+            { id: 't1', title: 'Today task', area: 'work', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock
+            .mockResolvedValueOnce(initialTasks)
+            .mockResolvedValueOnce(updatedTasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        await capturedOptions.onSetTaskArea('t1', 'work');
+        await flushAsyncWork();
+
+        expect(setTaskAreaMock).toHaveBeenCalledWith('t1', 'work');
+        const latestProjection = renderTodayProjectionMock.mock.calls.at(-1)[0];
+        expect(latestProjection.items).toHaveLength(1);
+        expect(latestProjection.items[0].id).toBe('t1');
+        expect(latestProjection.items[0].area).toBe('work');
     });
 });

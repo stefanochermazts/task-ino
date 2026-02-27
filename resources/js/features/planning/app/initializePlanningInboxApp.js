@@ -168,11 +168,20 @@ export function initializePlanningInboxApp(doc) {
             selectedArea,
             areas: listAreas(),
         });
+        const onRemoveFromToday = async (taskId) => {
+            const result = await removeFromToday(taskId);
+            if (result.ok) {
+                await refreshInbox();
+            } else if (ui.feedback) {
+                ui.feedback.textContent = result.message || 'Unable to remove from Today.';
+            }
+            return result;
+        };
         const todayProjection = computeTodayProjection({
             tasks: safeTasks,
             todayCap: readTodayCap(),
         });
-        renderTodayProjection(todayProjection, ui);
+        renderTodayProjection(todayProjection, ui, { onRemoveFromToday });
         return safeTasks;
     };
 

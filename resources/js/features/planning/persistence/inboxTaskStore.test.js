@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+    addTaskToTodayWithCap,
     getInboxTask,
     removeTaskFromToday,
     saveInboxTask,
@@ -231,5 +232,84 @@ describe('inboxTaskStore closure mutations', () => {
 
         const result = await setTaskArea('t-area3', '');
         expect(result).toEqual({ ok: false, code: 'INVALID_AREA' });
+    });
+
+    it('setTaskArea preserves createdAt (move semantics, no temporal mutation)', async () => {
+        const baseTask = {
+            id: 't-move-area',
+            title: 'Move area',
+            createdAt: '2026-02-20T09:00:00.000Z',
+            area: 'inbox',
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await setTaskArea('t-move-area', 'work');
+
+        expect(result.ok).toBe(true);
+        expect(result.task.createdAt).toBe('2026-02-20T09:00:00.000Z');
+        expect(result.task.area).toBe('work');
+        const persisted = await getInboxTask('t-move-area');
+        expect(persisted.createdAt).toBe('2026-02-20T09:00:00.000Z');
+    });
+
+    it('removeTaskFromToday preserves createdAt and area (move semantics, no temporal mutation)', async () => {
+        const baseTask = {
+            id: 't-move-today',
+            title: 'Remove from Today',
+            createdAt: '2026-02-23T08:00:00.000Z',
+            area: 'work',
+            todayIncluded: true,
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await removeTaskFromToday('t-move-today');
+
+        expect(result.ok).toBe(true);
+        expect(result.task.createdAt).toBe('2026-02-23T08:00:00.000Z');
+        expect(result.task.area).toBe('work');
+        expect(result.task.todayIncluded).toBe(false);
+        const persisted = await getInboxTask('t-move-today');
+        expect(persisted.createdAt).toBe('2026-02-23T08:00:00.000Z');
+        expect(persisted.area).toBe('work');
+    });
+
+    it('addTaskToTodayWithCap preserves createdAt and area (Today move does not change area)', async () => {
+        const baseTask = {
+            id: 't-add-today',
+            title: 'Add to Today',
+            createdAt: '2026-02-22T10:00:00.000Z',
+            area: 'work',
+            todayIncluded: false,
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await addTaskToTodayWithCap('t-add-today', 3);
+
+        expect(result.ok).toBe(true);
+        expect(result.task.createdAt).toBe('2026-02-22T10:00:00.000Z');
+        expect(result.task.area).toBe('work');
+        expect(result.task.todayIncluded).toBe(true);
+        const persisted = await getInboxTask('t-add-today');
+        expect(persisted.area).toBe('work');
+    });
+
+    it('setTaskArea on task in Today does not change todayIncluded (area move independent from Today)', async () => {
+        const baseTask = {
+            id: 't-area-today',
+            title: 'In Today',
+            createdAt: '2026-02-23T07:00:00.000Z',
+            area: 'inbox',
+            todayIncluded: true,
+        };
+        await saveInboxTask(baseTask);
+
+        const result = await setTaskArea('t-area-today', 'work');
+
+        expect(result.ok).toBe(true);
+        expect(result.task.todayIncluded).toBe(true);
+        expect(result.task.area).toBe('work');
+        const persisted = await getInboxTask('t-area-today');
+        expect(persisted.todayIncluded).toBe(true);
+        expect(persisted.area).toBe('work');
     });
 });

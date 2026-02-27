@@ -97,4 +97,56 @@ describe('renderTodayProjection', () => {
         const ui = { todayList: null, todayEmpty: null, todayCount: null, todayCapValue: null };
         expect(() => renderTodayProjection({ items: [], totalEligible: 0, cap: 3 }, ui)).not.toThrow();
     });
+
+    it('renders Remove from Today button when onRemoveFromToday is provided', () => {
+        const ui = buildUi();
+        const onRemoveFromToday = () => {};
+        const projection = {
+            items: [{ id: 't1', title: 'Task in Today', area: 'inbox' }],
+            totalEligible: 1,
+            cap: 3,
+        };
+
+        renderTodayProjection(projection, ui, { onRemoveFromToday });
+
+        const removeBtn = ui.todayList.querySelector('[data-action="remove-from-today"]');
+        expect(removeBtn).not.toBeNull();
+        expect(removeBtn.textContent).toBe('Remove from Today');
+        expect(removeBtn.dataset.taskId).toBe('t1');
+    });
+
+    it('does not render Remove from Today button when onRemoveFromToday is omitted', () => {
+        const ui = buildUi();
+        const projection = {
+            items: [{ id: 't1', title: 'Task', area: 'inbox' }],
+            totalEligible: 1,
+            cap: 3,
+        };
+
+        renderTodayProjection(projection, ui);
+
+        expect(ui.todayList.querySelector('[data-action="remove-from-today"]')).toBeNull();
+    });
+
+    it('calls onRemoveFromToday when Remove from Today button is clicked', () => {
+        const ui = buildUi();
+        const calls = [];
+        const onRemoveFromToday = (id) => calls.push(id);
+        const projection = {
+            items: [
+                { id: 't1', title: 'First', area: 'inbox' },
+                { id: 't2', title: 'Second', area: 'work' },
+            ],
+            totalEligible: 2,
+            cap: 3,
+        };
+
+        renderTodayProjection(projection, ui, { onRemoveFromToday });
+
+        const btns = ui.todayList.querySelectorAll('[data-action="remove-from-today"]');
+        expect(btns.length).toBe(2);
+        btns[1].click();
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toBe('t2');
+    });
 });
