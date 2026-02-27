@@ -8,6 +8,7 @@ const renderTodayProjectionMock = vi.fn();
 const addToTodayMock = vi.fn();
 const swapToTodayMock = vi.fn();
 const bulkAddToTodayMock = vi.fn();
+const bulkRescheduleTasksMock = vi.fn();
 const removeFromTodayMock = vi.fn();
 const pauseTaskMock = vi.fn();
 const setTaskAreaMock = vi.fn();
@@ -32,6 +33,10 @@ vi.mock('../commands/addToToday', () => ({
 
 vi.mock('../commands/bulkAddToToday', () => ({
     bulkAddToToday: (...args) => bulkAddToTodayMock(...args),
+}));
+
+vi.mock('../commands/bulkRescheduleTasks', () => ({
+    bulkRescheduleTasks: (...args) => bulkRescheduleTasksMock(...args),
 }));
 
 vi.mock('../commands/removeFromToday', () => ({
@@ -1332,5 +1337,89 @@ describe('initializePlanningInboxApp', () => {
         expect(task).toBeDefined();
         expect(task.area).toBe('inbox');
         expect(task.todayIncluded).toBe(true);
+    });
+
+    it('renderInboxProjection receives bulk reschedule callbacks and selection state', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Task 2', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const options = renderInboxProjectionMock.mock.calls.at(-1)[2];
+        expect(typeof options.onToggleBulkSelection).toBe('function');
+        expect(typeof options.onBulkRescheduleTasks).toBe('function');
+        expect(Array.isArray(options.selectedTaskIds)).toBe(true);
+    });
+
+    it('onBulkRescheduleTasks shows success feedback with affected tasks and refreshes', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Task 2', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        bulkRescheduleTasksMock.mockResolvedValue({ ok: true, taskIds: ['t1', 't2'], count: 2 });
+
+        let options;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, opts) => {
+            options = opts;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await options.onBulkRescheduleTasks(['t1', 't2'], '2026-07-01');
+        await flushAsyncWork();
+
+        expect(bulkRescheduleTasksMock).toHaveBeenCalledWith(['t1', 't2'], '2026-07-01');
+        const areaFeedback = document.querySelector('#area-feedback');
+        expect(areaFeedback.textContent).toContain('Bulk reschedule succeeded');
+        expect(areaFeedback.textContent).toContain('t1');
+        expect(areaFeedback.classList.contains('hidden')).toBe(false);
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThan(initialListCalls);
+    });
+
+    it('onBulkRescheduleTasks shows failure feedback with requested task list, clears selection, and no refresh', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Task 2', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        bulkRescheduleTasksMock.mockResolvedValue({
+            ok: false,
+            code: 'TASK_NOT_FOUND',
+            message: 'Task not found.',
+        });
+
+        let options;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, opts) => {
+            options = opts;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await options.onBulkRescheduleTasks(['t1', 't2'], '2026-07-01');
+        await flushAsyncWork();
+
+        expect(bulkRescheduleTasksMock).toHaveBeenCalledWith(['t1', 't2'], '2026-07-01');
+        const areaFeedback = document.querySelector('#area-feedback');
+        expect(areaFeedback.textContent).toContain('Task not found.');
+        expect(areaFeedback.textContent).toContain('Requested tasks: t1, t2');
+        expect(areaFeedback.classList.contains('hidden')).toBe(false);
+        expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
+        const latestOptions = renderInboxProjectionMock.mock.calls.at(-1)[2];
+        expect(latestOptions.selectedTaskIds).toEqual([]);
     });
 });

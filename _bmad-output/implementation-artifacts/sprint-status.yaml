@@ -56,7 +56,7 @@ development_status:
   2-2-cross-area-today-aggregation: done
   2-3-single-item-move-area-and-today-membership: done
   2-4-single-item-reschedule-temporal-context: done
-  2-5-bulk-selection-and-atomic-reschedule: backlog
+  2-5-bulk-selection-and-atomic-reschedule: done
   2-6-daily-cycle-continuity-enforcement: backlog
   epic-2-retrospective: optional
 

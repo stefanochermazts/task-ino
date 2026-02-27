@@ -6,6 +6,7 @@ import {
     setTaskPaused,
     setTaskArea as setTaskAreaInStore,
     rescheduleTask as rescheduleTaskInStore,
+    bulkRescheduleTasks as bulkRescheduleTasksInStore,
 } from '../persistence/inboxTaskStore';
 import { readTodayCap } from '../persistence/todayCapStore';
 import { isValidArea } from '../persistence/areaStore';
@@ -54,6 +55,12 @@ function normalizeResult(result) {
         if (result.task !== undefined) {
             out.task = result.task;
         }
+        if (result.taskIds !== undefined) {
+            out.taskIds = result.taskIds;
+        }
+        if (result.count !== undefined) {
+            out.count = result.count;
+        }
         return out;
     }
     const code = result?.code ?? INVARIANT_VIOLATION;
@@ -77,7 +84,7 @@ function normalizeResult(result) {
  * Single write-path guardrail for planning mutations.
  * All planning write operations MUST pass through this layer.
  *
- * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea' | 'rescheduleTask'
+ * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea' | 'rescheduleTask' | 'bulkRescheduleTasks'
  * @param {object} params - Action-specific parameters
  * @returns {Promise<{ok: boolean, code?: string, message?: string, task?: object}>}
  */
@@ -197,6 +204,28 @@ export async function mutatePlanningState(action, params) {
                 };
             }
             const result = await rescheduleTaskInStore(taskId, normalized);
+            return normalizeResult(result);
+        }
+
+        if (action === 'bulkRescheduleTasks') {
+            const { taskIds, scheduledFor } = params ?? {};
+            const ids = Array.isArray(taskIds) ? [...new Set(taskIds)] : [];
+            if (ids.length === 0 || ids.some((id) => !isValidTaskId(id))) {
+                return {
+                    ok: false,
+                    code: INVARIANT_VIOLATION,
+                    message: 'Invalid task list.',
+                };
+            }
+            const normalized = normalizeTemporalTarget(scheduledFor);
+            if (normalized === undefined) {
+                return {
+                    ok: false,
+                    code: INVALID_TEMPORAL_TARGET,
+                    message: 'Invalid date. Use a valid date (YYYY-MM-DD).',
+                };
+            }
+            const result = await bulkRescheduleTasksInStore(ids, normalized);
             return normalizeResult(result);
         }
 

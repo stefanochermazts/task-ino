@@ -16,6 +16,7 @@ const removeTaskFromTodayMock = vi.fn();
 const setTaskPausedMock = vi.fn();
 const setTaskAreaInStoreMock = vi.fn();
 const rescheduleTaskInStoreMock = vi.fn();
+const bulkRescheduleTasksInStoreMock = vi.fn();
 const isValidAreaMock = vi.fn();
 
 vi.mock('../persistence/todayCapStore', () => ({
@@ -31,6 +32,8 @@ vi.mock('../persistence/inboxTaskStore', () => ({
     setTaskPaused: (taskId) => setTaskPausedMock(taskId),
     setTaskArea: (taskId, area) => setTaskAreaInStoreMock(taskId, area),
     rescheduleTask: (taskId, scheduledFor) => rescheduleTaskInStoreMock(taskId, scheduledFor),
+    bulkRescheduleTasks: (taskIds, scheduledFor) =>
+        bulkRescheduleTasksInStoreMock(taskIds, scheduledFor),
 }));
 
 vi.mock('../persistence/areaStore', () => ({
@@ -496,6 +499,75 @@ describe('mutationGuardrail', () => {
 
             const result = await mutatePlanningState('rescheduleTask', {
                 taskId: 't1',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+        });
+    });
+
+    describe('bulkRescheduleTasks action', () => {
+        it('returns success when persistence succeeds', async () => {
+            bulkRescheduleTasksInStoreMock.mockResolvedValue({
+                ok: true,
+                taskIds: ['t1', 't2'],
+                count: 2,
+            });
+
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 't2', 't2'],
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.taskIds).toEqual(['t1', 't2']);
+            expect(result.count).toBe(2);
+            expect(bulkRescheduleTasksInStoreMock).toHaveBeenCalledWith(['t1', 't2'], '2026-03-01');
+        });
+
+        it('rejects invalid task list', async () => {
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: [],
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(bulkRescheduleTasksInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('rejects invalid temporal target', async () => {
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 't2'],
+                scheduledFor: 'bad-date',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVALID_TEMPORAL_TARGET);
+            expect(bulkRescheduleTasksInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns TASK_NOT_FOUND when persistence reports missing task', async () => {
+            bulkRescheduleTasksInStoreMock.mockResolvedValue({
+                ok: false,
+                code: 'TASK_NOT_FOUND',
+            });
+
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 'missing'],
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(TASK_NOT_FOUND);
+        });
+
+        it('returns INVARIANT_VIOLATION when persistence throws', async () => {
+            bulkRescheduleTasksInStoreMock.mockRejectedValue(new Error('db error'));
+
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 't2'],
                 scheduledFor: '2026-03-01',
             });
 

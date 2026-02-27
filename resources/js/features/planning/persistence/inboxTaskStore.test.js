@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
     addTaskToTodayWithCap,
+    bulkRescheduleTasks,
     getInboxTask,
     removeTaskFromToday,
     rescheduleTask,
@@ -9,7 +10,8 @@ import {
     setTaskPaused,
 } from './inboxTaskStore';
 
-function createFakeIndexedDb() {
+function createFakeIndexedDb(options = {}) {
+    let failPutIds = new Set(Array.isArray(options.failPutIds) ? options.failPutIds : []);
     const records = new Map();
     const objectStoreNames = { contains: (name) => name === 'tasks' };
 
@@ -23,6 +25,11 @@ function createFakeIndexedDb() {
         createIndex: () => {},
         put(value) {
             return makeRequest((request) => {
+                if (failPutIds.has(value.id)) {
+                    failPutIds.delete(value.id);
+                    request.onerror?.(new Error('Simulated write failure.'));
+                    return;
+                }
                 records.set(value.id, { ...value });
                 request.result = value;
                 request.onsuccess?.();
@@ -68,6 +75,9 @@ function createFakeIndexedDb() {
     };
 
     return {
+        __setFailPutIds(ids) {
+            failPutIds = new Set(Array.isArray(ids) ? ids : []);
+        },
         open: () => {
             const request = {};
             setTimeout(() => {
@@ -380,5 +390,88 @@ describe('inboxTaskStore closure mutations', () => {
         const persisted = await getInboxTask('t-reschedule-indep');
         expect(persisted.area).toBe('work');
         expect(persisted.todayIncluded).toBe(true);
+    });
+
+    it('bulkRescheduleTasks updates all selected tasks atomically with same scheduledFor', async () => {
+        await saveInboxTask({
+            id: 't-bulk-1',
+            title: 'Bulk 1',
+            createdAt: '2026-02-22T08:00:00.000Z',
+            area: 'work',
+            todayIncluded: true,
+        });
+        await saveInboxTask({
+            id: 't-bulk-2',
+            title: 'Bulk 2',
+            createdAt: '2026-02-22T08:10:00.000Z',
+            area: 'inbox',
+            todayIncluded: false,
+        });
+
+        const result = await bulkRescheduleTasks(['t-bulk-1', 't-bulk-2'], '2026-05-01');
+
+        expect(result.ok).toBe(true);
+        expect(result.count).toBe(2);
+        expect(result.taskIds).toEqual(['t-bulk-1', 't-bulk-2']);
+        const t1 = await getInboxTask('t-bulk-1');
+        const t2 = await getInboxTask('t-bulk-2');
+        expect(t1.scheduledFor).toBe('2026-05-01');
+        expect(t2.scheduledFor).toBe('2026-05-01');
+        expect(t1.area).toBe('work');
+        expect(t2.todayIncluded).toBe(false);
+    });
+
+    it('bulkRescheduleTasks rolls back fully when one task is missing', async () => {
+        await saveInboxTask({
+            id: 't-bulk-rb',
+            title: 'Rollback',
+            createdAt: '2026-02-22T08:00:00.000Z',
+            area: 'work',
+            todayIncluded: true,
+            scheduledFor: '2026-04-10',
+        });
+
+        const result = await bulkRescheduleTasks(['t-bulk-rb', 'missing-id'], '2026-06-01');
+
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('TASK_NOT_FOUND');
+        const persisted = await getInboxTask('t-bulk-rb');
+        expect(persisted.scheduledFor).toBe('2026-04-10');
+    });
+
+    it('bulkRescheduleTasks rolls back fully on write error', async () => {
+        const fakeDb = createFakeIndexedDb();
+        Object.defineProperty(window, 'indexedDB', {
+            configurable: true,
+            value: fakeDb,
+        });
+        await saveInboxTask({
+            id: 't-bulk-err-1',
+            title: 'Bulk err 1',
+            createdAt: '2026-02-22T08:00:00.000Z',
+            scheduledFor: '2026-04-10',
+        });
+        await saveInboxTask({
+            id: 't-bulk-err-2',
+            title: 'Bulk err 2',
+            createdAt: '2026-02-22T08:10:00.000Z',
+            scheduledFor: '2026-04-11',
+        });
+        let existing = null;
+        for (let i = 0; i < 3; i += 1) {
+            existing = await getInboxTask('t-bulk-err-2');
+            if (existing) break;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        expect(existing).not.toBeNull();
+        fakeDb.__setFailPutIds(['t-bulk-err-2']);
+
+        const result = await bulkRescheduleTasks(['t-bulk-err-1', 't-bulk-err-2'], '2026-06-01');
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('INVARIANT_VIOLATION');
+        const t1 = await getInboxTask('t-bulk-err-1');
+        const t2 = await getInboxTask('t-bulk-err-2');
+        expect(t1.scheduledFor).toBe('2026-04-10');
+        expect(t2.scheduledFor).toBe('2026-04-11');
     });
 });

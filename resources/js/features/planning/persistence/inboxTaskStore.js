@@ -304,6 +304,80 @@ export async function rescheduleTask(taskId, scheduledFor) {
     });
 }
 
+/**
+ * Reschedule multiple tasks atomically to one temporal target.
+ * Updates only scheduledFor and updatedAt; preserves identity and structural fields.
+ *
+ * @param {string[]} taskIds
+ * @param {string|null} scheduledFor
+ * @returns {Promise<{ok: boolean, code?: string, taskIds?: string[], count?: number}>}
+ */
+export async function bulkRescheduleTasks(taskIds, scheduledFor) {
+    const ids = Array.isArray(taskIds) ? [...taskIds] : [];
+    if (ids.length === 0) {
+        return { ok: false, code: 'INVARIANT_VIOLATION' };
+    }
+
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const listRequest = store.getAll();
+            listRequest.onsuccess = () => {
+                const tasks = Array.isArray(listRequest.result) ? listRequest.result : [];
+                const selected = [];
+                for (const id of ids) {
+                    const task = tasks.find((item) => item?.id === id) ?? null;
+                    if (!task) {
+                        resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                        return;
+                    }
+                    selected.push(task);
+                }
+
+                const nowIso = new Date().toISOString();
+                const originals = selected.map((task) => ({ ...task }));
+                const updates = selected.map((task) => ({
+                    ...task,
+                    scheduledFor: scheduledFor ?? null,
+                    updatedAt: nowIso,
+                }));
+
+                const rollback = () => {
+                    let restored = 0;
+                    const total = originals.length;
+                    const onRestoreDone = () => {
+                        restored += 1;
+                        if (restored === total) {
+                            resolve({ ok: false, code: 'INVARIANT_VIOLATION' });
+                        }
+                    };
+                    for (const original of originals) {
+                        const req = store.put(original);
+                        req.onsuccess = onRestoreDone;
+                        req.onerror = () => reject(new Error('Unable to rollback task.'));
+                    }
+                };
+
+                const writeNext = (index) => {
+                    if (index >= updates.length) {
+                        resolve({
+                            ok: true,
+                            taskIds: updates.map((u) => u.id),
+                            count: updates.length,
+                        });
+                        return;
+                    }
+                    const req = store.put(updates[index]);
+                    req.onsuccess = () => writeNext(index + 1);
+                    req.onerror = rollback;
+                };
+
+                writeNext(0);
+            };
+            listRequest.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
 export async function setTaskPaused(taskId) {
     return runTransaction('readwrite', (store) => {
         return new Promise((resolve, reject) => {

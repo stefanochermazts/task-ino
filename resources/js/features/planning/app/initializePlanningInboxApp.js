@@ -1,5 +1,6 @@
 import { addToToday, swapToToday } from '../commands/addToToday';
 import { bulkAddToToday } from '../commands/bulkAddToToday';
+import { bulkRescheduleTasks } from '../commands/bulkRescheduleTasks';
 import { createInboxTask } from '../commands/createInboxTask';
 import { removeFromToday } from '../commands/removeFromToday';
 import { pauseTask } from '../commands/pauseTask';
@@ -100,6 +101,7 @@ export function initializePlanningInboxApp(doc) {
     let captureInProgress = false;
     let pendingAddTaskId = null;
     let selectedArea = 'inbox';
+    let selectedBulkTaskIds = new Set();
 
     function syncAreaSelector() {
         if (!ui.areaSelector) return;
@@ -123,6 +125,8 @@ export function initializePlanningInboxApp(doc) {
     const refreshInbox = async () => {
         const tasks = await listInboxTasks();
         const safeTasks = (Array.isArray(tasks) ? tasks : []).filter(isValidTaskRecord);
+        const validTaskIds = new Set(safeTasks.map((t) => t.id));
+        selectedBulkTaskIds = new Set([...selectedBulkTaskIds].filter((id) => validTaskIds.has(id)));
         if (safeTasks.length !== (Array.isArray(tasks) ? tasks.length : 0) && ui.feedback) {
             ui.feedback.textContent = 'Some local tasks were skipped because their saved data is invalid.';
         }
@@ -175,12 +179,66 @@ export function initializePlanningInboxApp(doc) {
             }
             return result;
         };
+        const onToggleBulkSelection = (taskId, checked) => {
+            if (checked) {
+                selectedBulkTaskIds.add(taskId);
+            } else {
+                selectedBulkTaskIds.delete(taskId);
+            }
+            renderInboxProjection(areaTasks, ui, {
+                onAddToToday,
+                onBulkAddToToday,
+                onSetTaskArea,
+                onRescheduleTask,
+                onToggleBulkSelection,
+                onBulkRescheduleTasks,
+                selectedTaskIds: Array.from(selectedBulkTaskIds),
+                selectedArea,
+                areas: listAreas(),
+            });
+        };
+        const onBulkRescheduleTasks = async (taskIds, scheduledFor) => {
+            if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = '';
+                ui.areaFeedback.classList.add('hidden');
+            }
+            const result = await bulkRescheduleTasks(taskIds, scheduledFor);
+            selectedBulkTaskIds = new Set();
+            if (result.ok) {
+                const count = Number(result.count ?? taskIds.length);
+                const ids = Array.isArray(result.taskIds) ? result.taskIds : taskIds;
+                if (ui.areaFeedback) {
+                    ui.areaFeedback.textContent = `Bulk reschedule succeeded for ${count} task(s): ${ids.join(', ')}`;
+                    ui.areaFeedback.classList.remove('hidden');
+                }
+                await refreshInbox();
+            } else if (ui.areaFeedback) {
+                const ids = Array.isArray(taskIds) ? taskIds : [];
+                ui.areaFeedback.textContent = `${result.message || 'Bulk reschedule failed.'} Requested tasks: ${ids.join(', ')}`;
+                ui.areaFeedback.classList.remove('hidden');
+                renderInboxProjection(areaTasks, ui, {
+                    onAddToToday,
+                    onBulkAddToToday,
+                    onSetTaskArea,
+                    onRescheduleTask,
+                    onToggleBulkSelection,
+                    onBulkRescheduleTasks,
+                    selectedTaskIds: [],
+                    selectedArea,
+                    areas: listAreas(),
+                });
+            }
+            return result;
+        };
         const areaTasks = safeTasks.filter((t) => (t.area ?? 'inbox').toLowerCase() === selectedArea);
         renderInboxProjection(areaTasks, ui, {
             onAddToToday,
             onBulkAddToToday,
             onSetTaskArea,
             onRescheduleTask,
+            onToggleBulkSelection,
+            onBulkRescheduleTasks,
+            selectedTaskIds: Array.from(selectedBulkTaskIds),
             selectedArea,
             areas: listAreas(),
         });

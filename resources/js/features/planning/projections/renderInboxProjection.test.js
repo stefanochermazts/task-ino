@@ -210,4 +210,73 @@ describe('renderInboxProjection', () => {
         const input = ui.list.querySelector('input[type="date"]');
         expect(input).toBeNull();
     });
+
+    it('renders bulk selection checkboxes when onToggleBulkSelection provided', () => {
+        const ui = buildUi();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false }];
+
+        renderInboxProjection(tasks, ui, {
+            onToggleBulkSelection: () => {},
+            selectedTaskIds: [],
+        });
+
+        const cb = ui.list.querySelector('input[data-action="bulk-select-task"][data-task-id="t1"]');
+        expect(cb).not.toBeNull();
+        expect(cb.checked).toBe(false);
+    });
+
+    it('calls onToggleBulkSelection with checked state', () => {
+        const ui = buildUi();
+        const onToggleBulkSelection = vi.fn();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false }];
+
+        renderInboxProjection(tasks, ui, {
+            onToggleBulkSelection,
+            selectedTaskIds: [],
+        });
+
+        const cb = ui.list.querySelector('input[data-action="bulk-select-task"][data-task-id="t1"]');
+        cb.checked = true;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(onToggleBulkSelection).toHaveBeenCalledWith('t1', true);
+    });
+
+    it('renders bulk reschedule controls and calls callback with selected task ids and date', () => {
+        const ui = buildUi();
+        const onBulkRescheduleTasks = vi.fn();
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false },
+            { id: 't2', title: 'Task 2', todayIncluded: false },
+        ];
+
+        renderInboxProjection(tasks, ui, {
+            onBulkRescheduleTasks,
+            selectedTaskIds: ['t1', 't2'],
+        });
+
+        const dateInput = ui.list.querySelector('input[aria-label="Bulk reschedule date"]');
+        const bulkBtn = ui.list.querySelector('button[data-action="bulk-reschedule"]');
+        expect(dateInput).not.toBeNull();
+        expect(bulkBtn).not.toBeNull();
+        expect(bulkBtn.disabled).toBe(false);
+
+        dateInput.value = '2026-06-01';
+        bulkBtn.click();
+
+        expect(onBulkRescheduleTasks).toHaveBeenCalledWith(['t1', 't2'], '2026-06-01');
+    });
+
+    it('disables bulk reschedule button when nothing selected', () => {
+        const ui = buildUi();
+        const tasks = [{ id: 't1', title: 'Task 1', todayIncluded: false }];
+
+        renderInboxProjection(tasks, ui, {
+            onBulkRescheduleTasks: () => {},
+            selectedTaskIds: [],
+        });
+
+        const bulkBtn = ui.list.querySelector('button[data-action="bulk-reschedule"]');
+        expect(bulkBtn.disabled).toBe(true);
+    });
 });
