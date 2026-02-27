@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
     addTaskToTodayWithCap,
     bulkRescheduleTasks,
+    enforceDailyContinuity,
+    retainTaskForDate,
     getInboxTask,
     removeTaskFromToday,
     rescheduleTask,
@@ -473,5 +475,134 @@ describe('inboxTaskStore closure mutations', () => {
         const t2 = await getInboxTask('t-bulk-err-2');
         expect(t1.scheduledFor).toBe('2026-04-10');
         expect(t2.scheduledFor).toBe('2026-04-11');
+    });
+
+    describe('enforceDailyContinuity', () => {
+        it('returns applied false when lastPlanningDate equals today (idempotent)', async () => {
+            await saveInboxTask({
+                id: 't-cont-same',
+                title: 'In Today',
+                createdAt: '2026-02-23T08:00:00.000Z',
+                todayIncluded: true,
+            });
+
+            const result = await enforceDailyContinuity('2026-02-23', '2026-02-23');
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(false);
+            const persisted = await getInboxTask('t-cont-same');
+            expect(persisted.todayIncluded).toBe(true);
+        });
+
+        it('clears todayIncluded for tasks not scheduledFor today on day boundary', async () => {
+            await saveInboxTask({
+                id: 't-cont-clear',
+                title: 'Was in Today yesterday',
+                createdAt: '2026-02-22T08:00:00.000Z',
+                todayIncluded: true,
+                scheduledFor: null,
+            });
+
+            const result = await enforceDailyContinuity('2026-02-24', '2026-02-23');
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(true);
+            expect(result.updatedCount).toBe(1);
+            const persisted = await getInboxTask('t-cont-clear');
+            expect(persisted.todayIncluded).toBe(false);
+            expect(persisted.area).toBeUndefined();
+        });
+
+        it('adds todayIncluded for tasks scheduledFor today on day boundary', async () => {
+            await saveInboxTask({
+                id: 't-cont-add',
+                title: 'Explicitly rescheduled for today',
+                createdAt: '2026-02-20T08:00:00.000Z',
+                todayIncluded: false,
+                scheduledFor: '2026-02-24',
+            });
+
+            const result = await enforceDailyContinuity('2026-02-24', '2026-02-23');
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(true);
+            expect(result.updatedCount).toBe(1);
+            const persisted = await getInboxTask('t-cont-add');
+            expect(persisted.todayIncluded).toBe(true);
+        });
+
+        it('adds todayIncluded for tasks retainedFor today on day boundary', async () => {
+            await saveInboxTask({
+                id: 't-cont-retained',
+                title: 'Explicitly retained for today',
+                createdAt: '2026-02-20T08:00:00.000Z',
+                todayIncluded: false,
+                scheduledFor: null,
+                retainedFor: '2026-02-24',
+            });
+
+            const result = await enforceDailyContinuity('2026-02-24', '2026-02-23');
+
+            expect(result.ok).toBe(true);
+            const persisted = await getInboxTask('t-cont-retained');
+            expect(persisted.todayIncluded).toBe(true);
+        });
+
+        it('does not alter area or scheduledFor (preserves task identity)', async () => {
+            await saveInboxTask({
+                id: 't-cont-preserve',
+                title: 'Preserve fields',
+                createdAt: '2026-02-21T08:00:00.000Z',
+                area: 'work',
+                todayIncluded: true,
+                scheduledFor: null,
+            });
+
+            const result = await enforceDailyContinuity('2026-02-25', '2026-02-24');
+
+            expect(result.ok).toBe(true);
+            const persisted = await getInboxTask('t-cont-preserve');
+            expect(persisted.todayIncluded).toBe(false);
+            expect(persisted.area).toBe('work');
+            expect(persisted.scheduledFor).toBeNull();
+            expect(persisted.id).toBe('t-cont-preserve');
+            expect(persisted.createdAt).toBe('2026-02-21T08:00:00.000Z');
+        });
+
+        it('returns INVARIANT_VIOLATION when today is empty', async () => {
+            const result = await enforceDailyContinuity('', '2026-02-22');
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe('INVARIANT_VIOLATION');
+        });
+    });
+
+    describe('retainTaskForDate', () => {
+        it('sets retainedFor and clears todayIncluded, preserving scheduledFor and area', async () => {
+            await saveInboxTask({
+                id: 't-retain',
+                title: 'Retain me',
+                createdAt: '2026-02-22T08:00:00.000Z',
+                todayIncluded: true,
+                area: 'work',
+                scheduledFor: '2026-03-01',
+            });
+
+            const result = await retainTaskForDate('t-retain', '2026-02-24');
+
+            expect(result.ok).toBe(true);
+            expect(result.task.retainedFor).toBe('2026-02-24');
+            expect(result.task.todayIncluded).toBe(false);
+            expect(result.task.area).toBe('work');
+            expect(result.task.scheduledFor).toBe('2026-03-01');
+            const persisted = await getInboxTask('t-retain');
+            expect(persisted.retainedFor).toBe('2026-02-24');
+            expect(persisted.todayIncluded).toBe(false);
+            expect(persisted.scheduledFor).toBe('2026-03-01');
+        });
+
+        it('returns TASK_NOT_FOUND when task is missing', async () => {
+            const result = await retainTaskForDate('missing-id', '2026-02-24');
+            expect(result).toEqual({ ok: false, code: 'TASK_NOT_FOUND' });
+        });
     });
 });

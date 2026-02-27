@@ -2,8 +2,10 @@ import { addToToday, swapToToday } from '../commands/addToToday';
 import { bulkAddToToday } from '../commands/bulkAddToToday';
 import { bulkRescheduleTasks } from '../commands/bulkRescheduleTasks';
 import { createInboxTask } from '../commands/createInboxTask';
+import { enforceDailyContinuity } from '../commands/enforceDailyContinuity';
 import { removeFromToday } from '../commands/removeFromToday';
 import { pauseTask } from '../commands/pauseTask';
+import { retainTaskForNextDay } from '../commands/retainTaskForNextDay';
 import { setTaskArea } from '../commands/setTaskArea';
 import { rescheduleTask } from '../commands/rescheduleTask';
 import { listInboxTasks } from '../persistence/inboxTaskStore';
@@ -351,6 +353,12 @@ export function initializePlanningInboxApp(doc) {
                     'pause-btn rounded border border-amber-200 bg-white px-2 py-1 text-xs text-amber-700 hover:bg-amber-50';
                 pauseBtn.textContent = 'Pause';
                 pauseBtn.dataset.taskId = item.id;
+                const retainBtn = document.createElement('button');
+                retainBtn.type = 'button';
+                retainBtn.className =
+                    'retain-btn rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50';
+                retainBtn.textContent = 'Keep tomorrow';
+                retainBtn.dataset.taskId = item.id;
                 deferBtn.addEventListener('click', async () => {
                     const taskId = deferBtn.dataset.taskId;
                     if (!taskId) return;
@@ -383,8 +391,25 @@ export function initializePlanningInboxApp(doc) {
                         ui.closureError.classList.remove('hidden');
                     }
                 });
+                retainBtn.addEventListener('click', async () => {
+                    const taskId = retainBtn.dataset.taskId;
+                    if (!taskId) return;
+                    if (ui.closureError) {
+                        ui.closureError.textContent = '';
+                        ui.closureError.classList.add('hidden');
+                    }
+                    const result = await retainTaskForNextDay(taskId);
+                    if (result.ok) {
+                        const updatedTasks = await refreshInbox();
+                        await updateClosurePanel(updatedTasks);
+                    } else if (ui.closureError) {
+                        ui.closureError.textContent = result.message || 'Unable to retain.';
+                        ui.closureError.classList.remove('hidden');
+                    }
+                });
                 btnGroup.appendChild(deferBtn);
                 btnGroup.appendChild(pauseBtn);
+                btnGroup.appendChild(retainBtn);
                 li.appendChild(span);
                 li.appendChild(btnGroup);
                 ui.closureItemList.appendChild(li);
@@ -582,10 +607,12 @@ export function initializePlanningInboxApp(doc) {
         });
     }
 
-    refreshInbox().catch(() => {
-        clearPlanningProjectionUi(ui);
-        ui.feedback.textContent = 'Unable to load local Inbox right now.';
-    });
+    enforceDailyContinuity()
+        .then(() => refreshInbox())
+        .catch(() => {
+            clearPlanningProjectionUi(ui);
+            ui.feedback.textContent = 'Unable to load local Inbox right now.';
+        });
 
     if (!ui.form) {
         return;

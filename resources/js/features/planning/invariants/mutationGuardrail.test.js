@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     mutatePlanningState,
     TODAY_CAP_EXCEEDED,
@@ -17,10 +17,19 @@ const setTaskPausedMock = vi.fn();
 const setTaskAreaInStoreMock = vi.fn();
 const rescheduleTaskInStoreMock = vi.fn();
 const bulkRescheduleTasksInStoreMock = vi.fn();
+const enforceDailyContinuityInStoreMock = vi.fn();
+const retainTaskForDateInStoreMock = vi.fn();
+const readLastPlanningDateMock = vi.fn();
+const saveLastPlanningDateMock = vi.fn();
 const isValidAreaMock = vi.fn();
 
 vi.mock('../persistence/todayCapStore', () => ({
     readTodayCap: () => 3,
+}));
+
+vi.mock('../persistence/dayCycleStore', () => ({
+    readLastPlanningDate: () => readLastPlanningDateMock(),
+    saveLastPlanningDate: (date) => saveLastPlanningDateMock(date),
 }));
 
 vi.mock('../persistence/inboxTaskStore', () => ({
@@ -34,6 +43,9 @@ vi.mock('../persistence/inboxTaskStore', () => ({
     rescheduleTask: (taskId, scheduledFor) => rescheduleTaskInStoreMock(taskId, scheduledFor),
     bulkRescheduleTasks: (taskIds, scheduledFor) =>
         bulkRescheduleTasksInStoreMock(taskIds, scheduledFor),
+    enforceDailyContinuity: (today, lastPlanningDate) =>
+        enforceDailyContinuityInStoreMock(today, lastPlanningDate),
+    retainTaskForDate: (taskId, retainedFor) => retainTaskForDateInStoreMock(taskId, retainedFor),
 }));
 
 vi.mock('../persistence/areaStore', () => ({
@@ -573,6 +585,140 @@ describe('mutationGuardrail', () => {
 
             expect(result.ok).toBe(false);
             expect(result.code).toBe(INVARIANT_VIOLATION);
+        });
+    });
+
+    describe('enforceDailyContinuity action', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-02-23T12:00:00.000Z'));
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('returns applied false when lastPlanningDate equals today (idempotent)', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-23');
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(false);
+            expect(result.markerSaved).toBe(true);
+            expect(enforceDailyContinuityInStoreMock).not.toHaveBeenCalled();
+            expect(saveLastPlanningDateMock).not.toHaveBeenCalled();
+        });
+
+        it('calls store and saves lastPlanningDate when lastPlanningDate differs from today', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-22');
+            enforceDailyContinuityInStoreMock.mockResolvedValue({
+                ok: true,
+                applied: true,
+                updatedCount: 2,
+            });
+            saveLastPlanningDateMock.mockReturnValue({ ok: true });
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(true);
+            expect(result.updatedCount).toBe(2);
+            expect(result.markerSaved).toBe(true);
+            expect(enforceDailyContinuityInStoreMock).toHaveBeenCalledWith(
+                '2026-02-23',
+                '2026-02-22',
+            );
+            expect(saveLastPlanningDateMock).toHaveBeenCalledWith('2026-02-23');
+        });
+
+        it('calls store when lastPlanningDate is null (first run)', async () => {
+            readLastPlanningDateMock.mockReturnValue(null);
+            enforceDailyContinuityInStoreMock.mockResolvedValue({
+                ok: true,
+                applied: true,
+                updatedCount: 0,
+            });
+            saveLastPlanningDateMock.mockReturnValue({ ok: true });
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.markerSaved).toBe(true);
+            expect(enforceDailyContinuityInStoreMock).toHaveBeenCalledWith(
+                '2026-02-23',
+                null,
+            );
+            expect(saveLastPlanningDateMock).toHaveBeenCalledWith('2026-02-23');
+        });
+
+        it('does not save lastPlanningDate when store returns applied false', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-22');
+            enforceDailyContinuityInStoreMock.mockResolvedValue({
+                ok: true,
+                applied: false,
+            });
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(false);
+            expect(result.markerSaved).toBe(false);
+            expect(saveLastPlanningDateMock).not.toHaveBeenCalled();
+        });
+
+        it('returns INVARIANT_VIOLATION when store throws', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-22');
+            enforceDailyContinuityInStoreMock.mockRejectedValue(new Error('db error'));
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(saveLastPlanningDateMock).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('retainTaskForNextDay action', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-02-23T12:00:00.000Z'));
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('calls retainTaskForDate with computed tomorrow', async () => {
+            retainTaskForDateInStoreMock.mockResolvedValue({
+                ok: true,
+                task: { id: 't1', retainedFor: '2026-02-24', todayIncluded: false },
+            });
+
+            const result = await mutatePlanningState('retainTaskForNextDay', { taskId: 't1' });
+
+            expect(result.ok).toBe(true);
+            expect(retainTaskForDateInStoreMock).toHaveBeenCalledWith('t1', '2026-02-24');
+        });
+
+        it('rejects invalid taskId', async () => {
+            const result = await mutatePlanningState('retainTaskForNextDay', { taskId: '' });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(retainTaskForDateInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns TASK_NOT_FOUND when store reports missing task', async () => {
+            retainTaskForDateInStoreMock.mockResolvedValue({
+                ok: false,
+                code: 'TASK_NOT_FOUND',
+            });
+
+            const result = await mutatePlanningState('retainTaskForNextDay', { taskId: 'missing' });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(TASK_NOT_FOUND);
         });
     });
 

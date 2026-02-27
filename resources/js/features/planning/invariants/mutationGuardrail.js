@@ -7,8 +7,11 @@ import {
     setTaskArea as setTaskAreaInStore,
     rescheduleTask as rescheduleTaskInStore,
     bulkRescheduleTasks as bulkRescheduleTasksInStore,
+    enforceDailyContinuity as enforceDailyContinuityInStore,
+    retainTaskForDate as retainTaskForDateInStore,
 } from '../persistence/inboxTaskStore';
 import { readTodayCap } from '../persistence/todayCapStore';
+import { readLastPlanningDate, saveLastPlanningDate } from '../persistence/dayCycleStore';
 import { isValidArea } from '../persistence/areaStore';
 
 /** Stable domain error codes for blocked transitions */
@@ -49,6 +52,23 @@ function normalizeTemporalTarget(value) {
     return `${year}-${month}-${day}`;
 }
 
+function getTodayYYYYMMDD() {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getTomorrowYYYYMMDD() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 function normalizeResult(result) {
     if (result?.ok === true) {
         const out = { ok: true };
@@ -60,6 +80,15 @@ function normalizeResult(result) {
         }
         if (result.count !== undefined) {
             out.count = result.count;
+        }
+        if (result.applied !== undefined) {
+            out.applied = result.applied;
+        }
+        if (result.updatedCount !== undefined) {
+            out.updatedCount = result.updatedCount;
+        }
+        if (result.markerSaved !== undefined) {
+            out.markerSaved = result.markerSaved;
         }
         return out;
     }
@@ -84,7 +113,7 @@ function normalizeResult(result) {
  * Single write-path guardrail for planning mutations.
  * All planning write operations MUST pass through this layer.
  *
- * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea' | 'rescheduleTask' | 'bulkRescheduleTasks'
+ * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea' | 'rescheduleTask' | 'bulkRescheduleTasks' | 'retainTaskForNextDay' | 'enforceDailyContinuity'
  * @param {object} params - Action-specific parameters
  * @returns {Promise<{ok: boolean, code?: string, message?: string, task?: object}>}
  */
@@ -227,6 +256,34 @@ export async function mutatePlanningState(action, params) {
             }
             const result = await bulkRescheduleTasksInStore(ids, normalized);
             return normalizeResult(result);
+        }
+
+        if (action === 'retainTaskForNextDay') {
+            const { taskId } = params ?? {};
+            if (!isValidTaskId(taskId)) {
+                return {
+                    ok: false,
+                    code: INVARIANT_VIOLATION,
+                    message: 'Invalid task.',
+                };
+            }
+            const tomorrow = getTomorrowYYYYMMDD();
+            const result = await retainTaskForDateInStore(taskId, tomorrow);
+            return normalizeResult(result);
+        }
+
+        if (action === 'enforceDailyContinuity') {
+            const today = getTodayYYYYMMDD();
+            const lastPlanningDate = readLastPlanningDate();
+            if (lastPlanningDate === today) {
+                return normalizeResult({ ok: true, applied: false, markerSaved: true });
+            }
+            const result = await enforceDailyContinuityInStore(today, lastPlanningDate);
+            if (result.ok && result.applied) {
+                const saved = saveLastPlanningDate(today);
+                return normalizeResult({ ...result, markerSaved: saved?.ok === true });
+            }
+            return normalizeResult({ ...result, markerSaved: false });
         }
 
         return {

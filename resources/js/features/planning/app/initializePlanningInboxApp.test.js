@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createInboxTaskMock = vi.fn();
+const enforceDailyContinuityMock = vi.fn();
 const listInboxTasksMock = vi.fn();
 const renderInboxProjectionMock = vi.fn();
 const computeTodayProjectionMock = vi.fn();
@@ -11,6 +12,7 @@ const bulkAddToTodayMock = vi.fn();
 const bulkRescheduleTasksMock = vi.fn();
 const removeFromTodayMock = vi.fn();
 const pauseTaskMock = vi.fn();
+const retainTaskForNextDayMock = vi.fn();
 const setTaskAreaMock = vi.fn();
 const rescheduleTaskMock = vi.fn();
 
@@ -39,12 +41,20 @@ vi.mock('../commands/bulkRescheduleTasks', () => ({
     bulkRescheduleTasks: (...args) => bulkRescheduleTasksMock(...args),
 }));
 
+vi.mock('../commands/enforceDailyContinuity', () => ({
+    enforceDailyContinuity: (...args) => enforceDailyContinuityMock(...args),
+}));
+
 vi.mock('../commands/removeFromToday', () => ({
     removeFromToday: (...args) => removeFromTodayMock(...args),
 }));
 
 vi.mock('../commands/pauseTask', () => ({
     pauseTask: (...args) => pauseTaskMock(...args),
+}));
+
+vi.mock('../commands/retainTaskForNextDay', () => ({
+    retainTaskForNextDay: (...args) => retainTaskForNextDayMock(...args),
 }));
 
 vi.mock('../persistence/inboxTaskStore', () => ({
@@ -157,6 +167,7 @@ describe('initializePlanningInboxApp', () => {
         bulkAddToTodayMock.mockResolvedValue({ ok: true });
         removeFromTodayMock.mockResolvedValue({ ok: true });
         pauseTaskMock.mockResolvedValue({ ok: true });
+        retainTaskForNextDayMock.mockResolvedValue({ ok: true });
         setTaskAreaMock.mockResolvedValue({ ok: true });
         listInboxTasksMock.mockResolvedValue([]);
         computeTodayProjectionMock.mockReturnValue({
@@ -165,6 +176,26 @@ describe('initializePlanningInboxApp', () => {
             cap: 3,
         });
         createInboxTaskMock.mockResolvedValue({ ok: true, task: { id: 't1', title: 'Test' } });
+        enforceDailyContinuityMock.mockResolvedValue({ ok: true });
+    });
+
+    it('calls enforceDailyContinuity before refreshInbox on startup', async () => {
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        const callOrder = [];
+        enforceDailyContinuityMock.mockImplementation(() => {
+            callOrder.push('enforceDailyContinuity');
+            return Promise.resolve({ ok: true });
+        });
+        listInboxTasksMock.mockImplementation(() => {
+            callOrder.push('listInboxTasks');
+            return Promise.resolve([]);
+        });
+
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        expect(callOrder).toEqual(['enforceDailyContinuity', 'listInboxTasks']);
+        expect(enforceDailyContinuityMock).toHaveBeenCalledTimes(1);
     });
 
     it('submits capture and refreshes inbox projection immediately', async () => {
@@ -583,6 +614,7 @@ describe('initializePlanningInboxApp', () => {
         expect(itemList.textContent).toContain('Today 2');
         expect(itemList.querySelectorAll('.defer-btn').length).toBe(2);
         expect(itemList.querySelectorAll('.pause-btn').length).toBe(2);
+        expect(itemList.querySelectorAll('.retain-btn').length).toBe(2);
         const firstDecisionBtn = itemList.querySelector('.defer-btn');
         expect(document.activeElement).toBe(firstDecisionBtn);
     });
@@ -686,6 +718,55 @@ describe('initializePlanningInboxApp', () => {
         await flushAsyncWork();
 
         expect(pauseTaskMock).toHaveBeenCalledWith('t1');
+        const closureCompleteMsg = document.querySelector('#closure-complete-msg');
+        expect(closureCompleteMsg.classList.contains('hidden')).toBe(false);
+        expect(closureCompleteMsg.textContent).toBe('Day closed. Well done.');
+    });
+
+    it('retains an item for tomorrow from closure panel and updates Today', async () => {
+        const tasks = [{ id: 't1', title: 'Today 1', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' }];
+        const updatedTasks = [
+            { id: 't1', title: 'Today 1', todayIncluded: false, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock
+            .mockResolvedValueOnce(tasks) // initial load (refreshInbox)
+            .mockResolvedValueOnce(tasks) // panel open (updateClosurePanel)
+            .mockResolvedValueOnce(updatedTasks); // refreshInbox after retain
+        computeTodayProjectionMock
+            .mockReturnValueOnce({
+                items: [{ id: 't1', title: 'Today 1' }],
+                totalEligible: 1,
+                cap: 3,
+            })
+            .mockReturnValueOnce({
+                items: [{ id: 't1', title: 'Today 1' }],
+                totalEligible: 1,
+                cap: 3,
+            })
+            .mockReturnValueOnce({
+                items: [],
+                totalEligible: 0,
+                cap: 3,
+            })
+            .mockReturnValueOnce({
+                items: [],
+                totalEligible: 0,
+                cap: 3,
+            });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const closeDayBtn = document.querySelector('#close-day-btn');
+        closeDayBtn.dispatchEvent(new Event('click', { bubbles: true }));
+        await flushAsyncWork();
+
+        const retainBtn = document.querySelector('#closure-panel .retain-btn');
+        retainBtn.dispatchEvent(new Event('click', { bubbles: true }));
+        await flushAsyncWork();
+
+        expect(retainTaskForNextDayMock).toHaveBeenCalledWith('t1');
         const closureCompleteMsg = document.querySelector('#closure-complete-msg');
         expect(closureCompleteMsg.classList.contains('hidden')).toBe(false);
         expect(closureCompleteMsg.textContent).toBe('Day closed. Well done.');
