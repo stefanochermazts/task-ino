@@ -58,7 +58,7 @@ development_status:
   2-4-single-item-reschedule-temporal-context: done
   2-5-bulk-selection-and-atomic-reschedule: done
   2-6-daily-cycle-continuity-enforcement: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   epic-3: backlog
   3-1-runtime-isolation-from-sync-state: backlog
