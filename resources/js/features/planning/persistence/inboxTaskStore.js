@@ -272,6 +272,112 @@ export async function setTaskArea(taskId, areaId) {
     });
 }
 
+/**
+ * Reschedule a task to a new temporal target.
+ * Updates only scheduledFor and updatedAt; preserves id, title, createdAt, area, todayIncluded.
+ *
+ * @param {string} taskId
+ * @param {string|null} scheduledFor - ISO date string (YYYY-MM-DD) or null to clear
+ * @returns {Promise<{ok: boolean, code?: string, task?: object}>}
+ */
+export async function rescheduleTask(taskId, scheduledFor) {
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const getRequest = store.get(taskId);
+            getRequest.onsuccess = () => {
+                const task = getRequest.result ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                const updated = {
+                    ...task,
+                    scheduledFor: scheduledFor ?? null,
+                    updatedAt: new Date().toISOString(),
+                };
+                const putRequest = store.put(updated);
+                putRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                putRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            getRequest.onerror = () => reject(new Error('Unable to load task.'));
+        });
+    });
+}
+
+/**
+ * Reschedule multiple tasks atomically to one temporal target.
+ * Updates only scheduledFor and updatedAt; preserves identity and structural fields.
+ *
+ * @param {string[]} taskIds
+ * @param {string|null} scheduledFor
+ * @returns {Promise<{ok: boolean, code?: string, taskIds?: string[], count?: number}>}
+ */
+export async function bulkRescheduleTasks(taskIds, scheduledFor) {
+    const ids = Array.isArray(taskIds) ? [...taskIds] : [];
+    if (ids.length === 0) {
+        return { ok: false, code: 'INVARIANT_VIOLATION' };
+    }
+
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const listRequest = store.getAll();
+            listRequest.onsuccess = () => {
+                const tasks = Array.isArray(listRequest.result) ? listRequest.result : [];
+                const selected = [];
+                for (const id of ids) {
+                    const task = tasks.find((item) => item?.id === id) ?? null;
+                    if (!task) {
+                        resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                        return;
+                    }
+                    selected.push(task);
+                }
+
+                const nowIso = new Date().toISOString();
+                const originals = selected.map((task) => ({ ...task }));
+                const updates = selected.map((task) => ({
+                    ...task,
+                    scheduledFor: scheduledFor ?? null,
+                    updatedAt: nowIso,
+                }));
+
+                const rollback = () => {
+                    let restored = 0;
+                    const total = originals.length;
+                    const onRestoreDone = () => {
+                        restored += 1;
+                        if (restored === total) {
+                            resolve({ ok: false, code: 'INVARIANT_VIOLATION' });
+                        }
+                    };
+                    for (const original of originals) {
+                        const req = store.put(original);
+                        req.onsuccess = onRestoreDone;
+                        req.onerror = () => reject(new Error('Unable to rollback task.'));
+                    }
+                };
+
+                const writeNext = (index) => {
+                    if (index >= updates.length) {
+                        resolve({
+                            ok: true,
+                            taskIds: updates.map((u) => u.id),
+                            count: updates.length,
+                        });
+                        return;
+                    }
+                    const req = store.put(updates[index]);
+                    req.onsuccess = () => writeNext(index + 1);
+                    req.onerror = rollback;
+                };
+
+                writeNext(0);
+            };
+            listRequest.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
 export async function setTaskPaused(taskId) {
     return runTransaction('readwrite', (store) => {
         return new Promise((resolve, reject) => {
@@ -301,6 +407,119 @@ export async function setTaskPaused(taskId) {
     });
 }
 
+/**
+ * Explicitly retain a task for a future planning day without changing scheduledFor.
+ * This is used to carry a task into a new day ONLY when user explicitly chose to.
+ * Also clears todayIncluded to support day closure semantics.
+ *
+ * @param {string} taskId
+ * @param {string} retainedFor - YYYY-MM-DD
+ * @returns {Promise<{ok: boolean, code?: string, task?: object}>}
+ */
+export async function retainTaskForDate(taskId, retainedFor) {
+    const date = String(retainedFor ?? '').trim();
+    if (date.length === 0) {
+        return { ok: false, code: 'INVARIANT_VIOLATION' };
+    }
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const getRequest = store.get(taskId);
+            getRequest.onsuccess = () => {
+                const task = getRequest.result ?? null;
+                if (!task) {
+                    resolve({ ok: false, code: 'TASK_NOT_FOUND' });
+                    return;
+                }
+                const updated = {
+                    ...task,
+                    retainedFor: date,
+                    todayIncluded: false,
+                    updatedAt: new Date().toISOString(),
+                };
+                const putRequest = store.put(updated);
+                putRequest.onsuccess = () => resolve({ ok: true, task: updated });
+                putRequest.onerror = () => reject(new Error('Unable to save task.'));
+            };
+            getRequest.onerror = () => reject(new Error('Unable to load task.'));
+        });
+    });
+}
+
+/**
+ * Enforce day-boundary continuity: no implicit carry-over.
+ * - Tasks with todayIncluded but scheduledFor !== today → todayIncluded = false
+ * - Tasks with scheduledFor === today OR retainedFor === today → todayIncluded = true
+ * Idempotent when lastPlanningDate === today.
+ *
+ * @param {string} today - YYYY-MM-DD
+ * @param {string|null} lastPlanningDate - YYYY-MM-DD or null
+ * @returns {Promise<{ok: boolean, applied?: boolean, updatedCount?: number}>}
+ */
+export async function enforceDailyContinuity(today, lastPlanningDate) {
+    const todayStr = String(today ?? '').trim();
+    if (todayStr.length === 0) {
+        return { ok: false, code: 'INVARIANT_VIOLATION' };
+    }
+    if (lastPlanningDate === todayStr) {
+        return { ok: true, applied: false };
+    }
+
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const listRequest = store.getAll();
+            listRequest.onsuccess = () => {
+                const tasks = Array.isArray(listRequest.result) ? listRequest.result : [];
+                const nowIso = new Date().toISOString();
+                const updates = [];
+
+                for (const task of tasks) {
+                    const scheduledFor = task?.scheduledFor ?? null;
+                    const scheduledForToday = scheduledFor === todayStr;
+                    const retainedForToday = (task?.retainedFor ?? null) === todayStr;
+                    const wasInToday = task?.todayIncluded === true;
+
+                    let newTodayIncluded;
+                    if (scheduledForToday || retainedForToday) {
+                        newTodayIncluded = true;
+                    } else if (wasInToday) {
+                        newTodayIncluded = false;
+                    } else {
+                        continue;
+                    }
+
+                    if (task.todayIncluded !== newTodayIncluded) {
+                        updates.push({
+                            ...task,
+                            todayIncluded: newTodayIncluded,
+                            updatedAt: nowIso,
+                        });
+                    }
+                }
+
+                if (updates.length === 0) {
+                    resolve({ ok: true, applied: true, updatedCount: 0 });
+                    return;
+                }
+
+                let writesDone = 0;
+                const total = updates.length;
+                const onWriteSuccess = () => {
+                    writesDone += 1;
+                    if (writesDone === total) {
+                        resolve({ ok: true, applied: true, updatedCount: total });
+                    }
+                };
+                for (const u of updates) {
+                    const req = store.put(u);
+                    req.onsuccess = onWriteSuccess;
+                    req.onerror = () => reject(new Error('Unable to save task.'));
+                }
+            };
+            listRequest.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
 export async function listInboxTasks() {
     return runTransaction('readonly', (store) => {
         return new Promise((resolve, reject) => {
@@ -315,6 +534,56 @@ export async function listInboxTasks() {
                 resolve(items);
             };
             request.onerror = () => reject(new Error('Unable to list Inbox tasks.'));
+        });
+    });
+}
+
+/**
+ * Fetch all inbox tasks (unsorted) for reconciliation. Use listInboxTasks for UI ordering.
+ * @returns {Promise<object[]>}
+ */
+export async function getAllInboxTasks() {
+    return runTransaction('readonly', (store) => {
+        return new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result ?? []);
+            request.onerror = () => reject(new Error('Unable to load tasks.'));
+        });
+    });
+}
+
+/**
+ * Atomically replace all tasks in the store. Used for reconciliation after invariant-safe merge.
+ * All-or-nothing: entire transaction commits or rolls back.
+ *
+ * @param {object[]} tasks - Full task list to persist
+ * @returns {Promise<{ok: boolean, count?: number, code?: string}>}
+ */
+export async function replaceAllTasks(tasks) {
+    const list = Array.isArray(tasks) ? tasks : [];
+    const validTasks = list.filter((t) => t?.id != null);
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const clearRequest = store.clear();
+            clearRequest.onsuccess = () => {
+                if (validTasks.length === 0) {
+                    resolve({ ok: true, count: 0 });
+                    return;
+                }
+                let written = 0;
+                const onPutDone = () => {
+                    written += 1;
+                    if (written === validTasks.length) {
+                        resolve({ ok: true, count: validTasks.length });
+                    }
+                };
+                for (const task of validTasks) {
+                    const req = store.put(task);
+                    req.onsuccess = onPutDone;
+                    req.onerror = () => reject(new Error('Unable to persist reconciled tasks.'));
+                }
+            };
+            clearRequest.onerror = () => reject(new Error('Unable to clear store for reconciliation.'));
         });
     });
 }

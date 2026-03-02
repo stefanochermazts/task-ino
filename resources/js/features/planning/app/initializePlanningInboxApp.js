@@ -1,15 +1,29 @@
 import { addToToday, swapToToday } from '../commands/addToToday';
 import { bulkAddToToday } from '../commands/bulkAddToToday';
+import { bulkRescheduleTasks } from '../commands/bulkRescheduleTasks';
 import { createInboxTask } from '../commands/createInboxTask';
+import { enforceDailyContinuity } from '../commands/enforceDailyContinuity';
 import { removeFromToday } from '../commands/removeFromToday';
 import { pauseTask } from '../commands/pauseTask';
+import { retainTaskForNextDay } from '../commands/retainTaskForNextDay';
 import { setTaskArea } from '../commands/setTaskArea';
+import { rescheduleTask } from '../commands/rescheduleTask';
 import { listInboxTasks } from '../persistence/inboxTaskStore';
 import { listAreas, addArea } from '../persistence/areaStore';
 import { readTodayCap, saveTodayCap } from '../persistence/todayCapStore';
+import { readSyncMode } from '../persistence/syncModeStore';
+import { setSyncMode } from '../commands/setSyncMode';
+import { getSyncStatus, sanitizeSyncError, getAlignmentFeedback, SYNC_STATUS } from '../sync/syncFeedbackModel';
+import { reconcileFromRemote } from '../commands/reconcileFromRemote';
+import { exportPlanningData } from '../commands/exportPlanningData';
+import { resetSyncState } from '../commands/resetSyncState';
+import { deleteLocalPlanningData } from '../commands/deleteLocalPlanningData';
+import { deleteSyncedPlanningData } from '../commands/deleteSyncedPlanningData';
 import { computeTodayProjection, isValidTaskRecord } from '../projections/computeTodayProjection';
 import { renderInboxProjection } from '../projections/renderInboxProjection';
 import { renderTodayProjection } from '../projections/renderTodayProjection';
+
+const NETWORK_FAILURE_SIM_KEY = 'planning.syncFailureSimulation';
 
 function clearPlanningProjectionUi(ui) {
     if (ui.list) ui.list.innerHTML = '';
@@ -79,14 +93,38 @@ function readUi(root) {
         reviewError: root.querySelector('#review-error'),
         reviewConfirmBtn: root.querySelector('#review-confirm-btn'),
         networkStatus: root.querySelector('#network-status'),
+        syncModeToggle: root.querySelector('#sync-mode-toggle'),
+        syncModeLabel: root.querySelector('#sync-mode-label'),
+        reconcileBtn: root.querySelector('#reconcile-btn'),
+        syncStatus: root.querySelector('#sync-status'),
+        syncStatusFeedback: root.querySelector('#sync-status-feedback'),
+        exportPlanBtn: root.querySelector('#export-planning-btn'),
+        exportFeedback: root.querySelector('#export-feedback'),
+        controlFeedback: root.querySelector('#control-feedback'),
+        resetSyncBtn: root.querySelector('#reset-sync-btn'),
+        deleteLocalBtn: root.querySelector('#delete-local-btn'),
+        deleteSyncedBtn: root.querySelector('#delete-synced-btn'),
     };
 }
 
+function isNetworkFailureSimulated() {
+    const raw = window.localStorage?.getItem(NETWORK_FAILURE_SIM_KEY);
+    const s = String(raw ?? '').trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'on' || s === 'yes';
+}
+
 function setConnectivityStatus(ui) {
-    const online = window.navigator.onLine;
+    const simulatedOffline = isNetworkFailureSimulated();
+    const online = window.navigator.onLine && !simulatedOffline;
     ui.networkStatus.textContent = online
         ? 'Online. Capture remains immediate.'
-        : 'Offline. Capture remains immediate and local.';
+        : simulatedOffline
+          ? 'Offline (simulated). Capture remains immediate and local.'
+          : 'Offline. Capture remains immediate and local.';
+}
+
+function isOnlineNow() {
+    return window.navigator.onLine && !isNetworkFailureSimulated();
 }
 
 export function initializePlanningInboxApp(doc) {
@@ -99,6 +137,160 @@ export function initializePlanningInboxApp(doc) {
     let captureInProgress = false;
     let pendingAddTaskId = null;
     let selectedArea = 'inbox';
+    let selectedBulkTaskIds = new Set();
+    let exportFeedbackTimeoutId = null;
+    let controlFeedbackTimeoutId = null;
+    const syncUiState = {
+        status: SYNC_STATUS.OFFLINE,
+        lastError: null,
+        alignment: null,
+    };
+
+    function scheduleExportFeedbackClear(delayMs) {
+        if (exportFeedbackTimeoutId) {
+            clearTimeout(exportFeedbackTimeoutId);
+        }
+        exportFeedbackTimeoutId = setTimeout(() => {
+            if (ui.exportFeedback) {
+                ui.exportFeedback.textContent = '';
+            }
+            exportFeedbackTimeoutId = null;
+        }, delayMs);
+    }
+
+    function scheduleControlFeedbackClear(delayMs) {
+        if (controlFeedbackTimeoutId) {
+            clearTimeout(controlFeedbackTimeoutId);
+        }
+        controlFeedbackTimeoutId = setTimeout(() => {
+            if (ui.controlFeedback) {
+                ui.controlFeedback.textContent = '';
+            }
+            controlFeedbackTimeoutId = null;
+        }, delayMs);
+    }
+
+    function renderSyncStatus() {
+        if (!ui.syncStatus) return;
+        const labels = {
+            [SYNC_STATUS.SYNCING]: 'Sync status: syncing',
+            [SYNC_STATUS.OFFLINE]: 'Sync status: offline',
+            [SYNC_STATUS.RETRYING]: 'Sync status: retrying',
+            [SYNC_STATUS.SUCCESS]: 'Sync status: success',
+        };
+        ui.syncStatus.textContent = labels[syncUiState.status] ?? 'Sync status: offline';
+
+        if (!ui.syncStatusFeedback) return;
+        const alignment = syncUiState.alignment;
+        if (alignment) {
+            const fb = getAlignmentFeedback(alignment);
+            ui.syncStatusFeedback.textContent = [fb.message, fb.recovery].filter(Boolean).join(' ');
+            ui.syncStatusFeedback.classList.remove('hidden');
+            return;
+        }
+        if (syncUiState.lastError) {
+            ui.syncStatusFeedback.textContent = `${syncUiState.lastError.message} ${syncUiState.lastError.recovery}`;
+            ui.syncStatusFeedback.classList.remove('hidden');
+            return;
+        }
+
+        const infoByStatus = {
+            [SYNC_STATUS.SYNCING]: 'Sync update in progress.',
+            [SYNC_STATUS.OFFLINE]: 'Planning continues locally while sync is offline.',
+            [SYNC_STATUS.RETRYING]: 'Retrying sync. Planning remains uninterrupted.',
+            [SYNC_STATUS.SUCCESS]: 'Sync feedback is informational and non-blocking.',
+        };
+        ui.syncStatusFeedback.textContent = infoByStatus[syncUiState.status] ?? '';
+        ui.syncStatusFeedback.classList.remove('hidden');
+    }
+
+    function runReconciliation(mutations) {
+        syncUiState.alignment = { reconciling: true };
+        renderSyncStatus();
+        reconcileFromRemote(mutations)
+            .then((result) => {
+                if (result.ok) {
+                    syncUiState.alignment = {};
+                    renderSyncStatus();
+                    return refreshInbox().then(() => {
+                        setTimeout(() => {
+                            syncUiState.alignment = null;
+                            updateSyncStatusFromRuntime();
+                        }, 2000);
+                    });
+                }
+                syncUiState.alignment = { rejected: true, error: result };
+                renderSyncStatus();
+                setTimeout(() => {
+                    syncUiState.alignment = null;
+                    updateSyncStatusFromRuntime();
+                }, 3000);
+            })
+            .catch((err) => {
+                syncUiState.alignment = { rejected: true, error: err };
+                renderSyncStatus();
+                setTimeout(() => {
+                    syncUiState.alignment = null;
+                    updateSyncStatusFromRuntime();
+                }, 3000);
+            });
+    }
+
+    root.addEventListener('planning:reconcile', (event) => {
+        const mutations = Array.isArray(event?.detail?.mutations) ? event.detail.mutations : [];
+        runReconciliation(mutations);
+    });
+
+    if (ui.reconcileBtn) {
+        ui.reconcileBtn.disabled = readSyncMode() !== 'enabled';
+        ui.reconcileBtn.addEventListener('click', async () => {
+            const provider = window.taskinoSync?.fetchRemoteMutations;
+            if (typeof provider !== 'function') {
+                syncUiState.alignment = { rejected: true, error: { code: 'SYNC_NOT_CONFIGURED' } };
+                renderSyncStatus();
+                setTimeout(() => {
+                    syncUiState.alignment = null;
+                    updateSyncStatusFromRuntime();
+                }, 3000);
+                return;
+            }
+            let remoteMutations;
+            try {
+                remoteMutations = await provider();
+            } catch (error) {
+                syncUiState.alignment = { rejected: true, error };
+                renderSyncStatus();
+                setTimeout(() => {
+                    syncUiState.alignment = null;
+                    updateSyncStatusFromRuntime();
+                }, 3000);
+                return;
+            }
+            if (!Array.isArray(remoteMutations)) {
+                syncUiState.alignment = { rejected: true, error: { code: 'SYNC_PAYLOAD_INVALID' } };
+                renderSyncStatus();
+                setTimeout(() => {
+                    syncUiState.alignment = null;
+                    updateSyncStatusFromRuntime();
+                }, 3000);
+                return;
+            }
+            root.dispatchEvent(
+                new CustomEvent('planning:reconcile', {
+                    detail: { mutations: remoteMutations },
+                }),
+            );
+        });
+    }
+
+    function updateSyncStatusFromRuntime() {
+        syncUiState.status = getSyncStatus({
+            syncEnabled: readSyncMode() === 'enabled',
+            online: isOnlineNow(),
+            hasError: syncUiState.lastError !== null,
+        });
+        renderSyncStatus();
+    }
 
     function syncAreaSelector() {
         if (!ui.areaSelector) return;
@@ -122,6 +314,8 @@ export function initializePlanningInboxApp(doc) {
     const refreshInbox = async () => {
         const tasks = await listInboxTasks();
         const safeTasks = (Array.isArray(tasks) ? tasks : []).filter(isValidTaskRecord);
+        const validTaskIds = new Set(safeTasks.map((t) => t.id));
+        selectedBulkTaskIds = new Set([...selectedBulkTaskIds].filter((id) => validTaskIds.has(id)));
         if (safeTasks.length !== (Array.isArray(tasks) ? tasks.length : 0) && ui.feedback) {
             ui.feedback.textContent = 'Some local tasks were skipped because their saved data is invalid.';
         }
@@ -160,19 +354,97 @@ export function initializePlanningInboxApp(doc) {
             }
             return result;
         };
+        const onRescheduleTask = async (taskId, scheduledFor) => {
+            if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = '';
+                ui.areaFeedback.classList.add('hidden');
+            }
+            const result = await rescheduleTask(taskId, scheduledFor);
+            if (result.ok) {
+                await refreshInbox();
+            } else if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = result.message || 'Invalid date. Use a valid date (YYYY-MM-DD).';
+                ui.areaFeedback.classList.remove('hidden');
+            }
+            return result;
+        };
+        const onToggleBulkSelection = (taskId, checked) => {
+            if (checked) {
+                selectedBulkTaskIds.add(taskId);
+            } else {
+                selectedBulkTaskIds.delete(taskId);
+            }
+            renderInboxProjection(areaTasks, ui, {
+                onAddToToday,
+                onBulkAddToToday,
+                onSetTaskArea,
+                onRescheduleTask,
+                onToggleBulkSelection,
+                onBulkRescheduleTasks,
+                selectedTaskIds: Array.from(selectedBulkTaskIds),
+                selectedArea,
+                areas: listAreas(),
+            });
+        };
+        const onBulkRescheduleTasks = async (taskIds, scheduledFor) => {
+            if (ui.areaFeedback) {
+                ui.areaFeedback.textContent = '';
+                ui.areaFeedback.classList.add('hidden');
+            }
+            const result = await bulkRescheduleTasks(taskIds, scheduledFor);
+            selectedBulkTaskIds = new Set();
+            if (result.ok) {
+                const count = Number(result.count ?? taskIds.length);
+                const ids = Array.isArray(result.taskIds) ? result.taskIds : taskIds;
+                if (ui.areaFeedback) {
+                    ui.areaFeedback.textContent = `Bulk reschedule succeeded for ${count} task(s): ${ids.join(', ')}`;
+                    ui.areaFeedback.classList.remove('hidden');
+                }
+                await refreshInbox();
+            } else if (ui.areaFeedback) {
+                const ids = Array.isArray(taskIds) ? taskIds : [];
+                ui.areaFeedback.textContent = `${result.message || 'Bulk reschedule failed.'} Requested tasks: ${ids.join(', ')}`;
+                ui.areaFeedback.classList.remove('hidden');
+                renderInboxProjection(areaTasks, ui, {
+                    onAddToToday,
+                    onBulkAddToToday,
+                    onSetTaskArea,
+                    onRescheduleTask,
+                    onToggleBulkSelection,
+                    onBulkRescheduleTasks,
+                    selectedTaskIds: [],
+                    selectedArea,
+                    areas: listAreas(),
+                });
+            }
+            return result;
+        };
         const areaTasks = safeTasks.filter((t) => (t.area ?? 'inbox').toLowerCase() === selectedArea);
         renderInboxProjection(areaTasks, ui, {
             onAddToToday,
             onBulkAddToToday,
             onSetTaskArea,
+            onRescheduleTask,
+            onToggleBulkSelection,
+            onBulkRescheduleTasks,
+            selectedTaskIds: Array.from(selectedBulkTaskIds),
             selectedArea,
             areas: listAreas(),
         });
+        const onRemoveFromToday = async (taskId) => {
+            const result = await removeFromToday(taskId);
+            if (result.ok) {
+                await refreshInbox();
+            } else if (ui.feedback) {
+                ui.feedback.textContent = result.message || 'Unable to remove from Today.';
+            }
+            return result;
+        };
         const todayProjection = computeTodayProjection({
             tasks: safeTasks,
             todayCap: readTodayCap(),
         });
-        renderTodayProjection(todayProjection, ui);
+        renderTodayProjection(todayProjection, ui, { onRemoveFromToday });
         return safeTasks;
     };
 
@@ -268,6 +540,12 @@ export function initializePlanningInboxApp(doc) {
                     'pause-btn rounded border border-amber-200 bg-white px-2 py-1 text-xs text-amber-700 hover:bg-amber-50';
                 pauseBtn.textContent = 'Pause';
                 pauseBtn.dataset.taskId = item.id;
+                const retainBtn = document.createElement('button');
+                retainBtn.type = 'button';
+                retainBtn.className =
+                    'retain-btn rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50';
+                retainBtn.textContent = 'Keep tomorrow';
+                retainBtn.dataset.taskId = item.id;
                 deferBtn.addEventListener('click', async () => {
                     const taskId = deferBtn.dataset.taskId;
                     if (!taskId) return;
@@ -300,8 +578,25 @@ export function initializePlanningInboxApp(doc) {
                         ui.closureError.classList.remove('hidden');
                     }
                 });
+                retainBtn.addEventListener('click', async () => {
+                    const taskId = retainBtn.dataset.taskId;
+                    if (!taskId) return;
+                    if (ui.closureError) {
+                        ui.closureError.textContent = '';
+                        ui.closureError.classList.add('hidden');
+                    }
+                    const result = await retainTaskForNextDay(taskId);
+                    if (result.ok) {
+                        const updatedTasks = await refreshInbox();
+                        await updateClosurePanel(updatedTasks);
+                    } else if (ui.closureError) {
+                        ui.closureError.textContent = result.message || 'Unable to retain.';
+                        ui.closureError.classList.remove('hidden');
+                    }
+                });
                 btnGroup.appendChild(deferBtn);
                 btnGroup.appendChild(pauseBtn);
+                btnGroup.appendChild(retainBtn);
                 li.appendChild(span);
                 li.appendChild(btnGroup);
                 ui.closureItemList.appendChild(li);
@@ -475,8 +770,164 @@ export function initializePlanningInboxApp(doc) {
     }
 
     setConnectivityStatus(ui);
-    window.addEventListener('online', () => setConnectivityStatus(ui));
-    window.addEventListener('offline', () => setConnectivityStatus(ui));
+    updateSyncStatusFromRuntime();
+    window.addEventListener('online', () => {
+        setConnectivityStatus(ui);
+        updateSyncStatusFromRuntime();
+    });
+    window.addEventListener('offline', () => {
+        setConnectivityStatus(ui);
+        updateSyncStatusFromRuntime();
+    });
+
+    function updateSyncModeUi() {
+        if (!ui.syncModeLabel || !ui.syncModeToggle) return;
+        const enabled = readSyncMode() === 'enabled';
+        ui.syncModeLabel.textContent = enabled ? 'On' : 'Off';
+        ui.syncModeToggle.setAttribute('aria-pressed', String(enabled));
+        if (ui.reconcileBtn) {
+            ui.reconcileBtn.disabled = !enabled;
+        }
+    }
+
+    if (ui.resetSyncBtn && ui.controlFeedback) {
+        ui.resetSyncBtn.addEventListener('click', async () => {
+            const confirmed = window.confirm(
+                'Reset sync? Your local tasks and planning data will be kept. Sync will be disabled and you can re-enable it with fresh credentials.',
+            );
+            if (!confirmed) return;
+            ui.controlFeedback.textContent = '';
+            ui.resetSyncBtn.disabled = true;
+            try {
+                const result = await resetSyncState({ confirmed: true });
+                if (result.ok) {
+                    updateSyncModeUi();
+                    syncUiState.lastError = null;
+                    updateSyncStatusFromRuntime();
+                    ui.controlFeedback.textContent =
+                        result.code === 'RESET_REMOTE_PARTIAL'
+                            ? result.message ?? 'Sync reset. You can re-enable sync.'
+                            : 'Sync reset. You can re-enable sync with fresh credentials.';
+                } else {
+                    ui.controlFeedback.textContent = result.message ?? 'Sync reset failed. Please retry.';
+                }
+                scheduleControlFeedbackClear(5000);
+            } catch {
+                ui.controlFeedback.textContent = 'Sync reset is temporarily unavailable. Please retry.';
+            } finally {
+                ui.resetSyncBtn.disabled = false;
+            }
+        });
+    }
+
+    if (ui.deleteLocalBtn && ui.controlFeedback) {
+        ui.deleteLocalBtn.addEventListener('click', async () => {
+            const confirmed = window.confirm(
+                'Delete all local planning data? Tasks, areas, Today cap, sync mode, and keys will be removed. This cannot be undone. Continue?',
+            );
+            if (!confirmed) return;
+            ui.controlFeedback.textContent = '';
+            ui.deleteLocalBtn.disabled = true;
+            try {
+                const result = await deleteLocalPlanningData({ confirmed: true });
+                if (result.ok) {
+                    updateSyncModeUi();
+                    syncUiState.lastError = null;
+                    updateSyncStatusFromRuntime();
+                    if (ui.todayCapInput) ui.todayCapInput.value = String(readTodayCap());
+                    await refreshInbox();
+                    ui.controlFeedback.textContent =
+                        result.code === 'LOCAL_DELETE_E2EE_PARTIAL'
+                            ? result.message ?? 'Local data deleted.'
+                            : 'Local data deleted.';
+                } else {
+                    ui.controlFeedback.textContent = result.message ?? 'Delete failed. Please retry.';
+                }
+                scheduleControlFeedbackClear(5000);
+            } catch {
+                ui.controlFeedback.textContent = 'Delete is temporarily unavailable. Please retry.';
+            } finally {
+                ui.deleteLocalBtn.disabled = false;
+            }
+        });
+    }
+
+    if (ui.deleteSyncedBtn && ui.controlFeedback) {
+        ui.deleteSyncedBtn.addEventListener('click', async () => {
+            const confirmed = window.confirm(
+                'Delete synced data on the server? Planning data stored remotely will be removed. This cannot be undone. Local data will remain. Continue?',
+            );
+            if (!confirmed) return;
+            ui.controlFeedback.textContent = '';
+            ui.deleteSyncedBtn.disabled = true;
+            try {
+                const result = await deleteSyncedPlanningData({ confirmed: true });
+                if (result.ok) {
+                    updateSyncStatusFromRuntime();
+                    ui.controlFeedback.textContent = 'Synced data deleted.';
+                } else {
+                    ui.controlFeedback.textContent = result.message ?? 'Synced delete failed. Please retry.';
+                }
+                scheduleControlFeedbackClear(5000);
+            } catch {
+                ui.controlFeedback.textContent = 'Synced delete is temporarily unavailable. Please retry.';
+            } finally {
+                ui.deleteSyncedBtn.disabled = false;
+            }
+        });
+    }
+
+    if (ui.exportPlanBtn && ui.exportFeedback) {
+        ui.exportPlanBtn.addEventListener('click', async () => {
+            ui.exportFeedback.textContent = '';
+            ui.exportPlanBtn.disabled = true;
+            try {
+                const result = await exportPlanningData();
+                if (result.ok && result.json && result.filename) {
+                    const blob = new Blob([result.json], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = result.filename;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    ui.exportFeedback.textContent = 'Export downloaded.';
+                    scheduleExportFeedbackClear(3000);
+                } else {
+                    ui.exportFeedback.textContent = result.message ?? 'Export failed. Please retry.';
+                }
+            } catch {
+                ui.exportFeedback.textContent = 'Export is temporarily unavailable. Please retry.';
+            } finally {
+                ui.exportPlanBtn.disabled = false;
+            }
+        });
+    }
+
+    if (ui.syncModeToggle && ui.syncModeLabel) {
+        updateSyncModeUi();
+        ui.syncModeToggle.addEventListener('click', async () => {
+            ui.syncModeToggle.disabled = true;
+            syncUiState.status = SYNC_STATUS.SYNCING;
+            syncUiState.lastError = null;
+            renderSyncStatus();
+            const currentlyEnabled = readSyncMode() === 'enabled';
+            try {
+                const result = await setSyncMode(!currentlyEnabled);
+                if (result.ok) {
+                    updateSyncModeUi();
+                    syncUiState.lastError = null;
+                    updateSyncStatusFromRuntime();
+                } else {
+                    syncUiState.lastError = sanitizeSyncError(result);
+                    syncUiState.status = SYNC_STATUS.RETRYING;
+                    renderSyncStatus();
+                }
+            } finally {
+                ui.syncModeToggle.disabled = false;
+            }
+        });
+    }
 
     if (ui.todayCapInput) {
         ui.todayCapInput.value = String(readTodayCap());
@@ -499,10 +950,12 @@ export function initializePlanningInboxApp(doc) {
         });
     }
 
-    refreshInbox().catch(() => {
-        clearPlanningProjectionUi(ui);
-        ui.feedback.textContent = 'Unable to load local Inbox right now.';
-    });
+    enforceDailyContinuity()
+        .then(() => refreshInbox())
+        .catch(() => {
+            clearPlanningProjectionUi(ui);
+            ui.feedback.textContent = 'Unable to load local Inbox right now.';
+        });
 
     if (!ui.form) {
         return;

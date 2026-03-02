@@ -43,4 +43,28 @@ describe('computeTodayProjection', () => {
 
         expect(online).toEqual(offline);
     });
+
+    it('aggregates tasks from multiple areas and passes area through items', () => {
+        const tasks = [
+            { id: 'inbox-1', title: 'Inbox task', area: 'inbox', createdAt: '2026-02-24T09:00:00.000Z', todayIncluded: true },
+            { id: 'work-1', title: 'Work task', area: 'work', createdAt: '2026-02-24T08:00:00.000Z', todayIncluded: true },
+        ];
+
+        const projection = computeTodayProjection({ tasks, todayCap: 3 });
+
+        expect(projection.items).toHaveLength(2);
+        expect(projection.items.map((i) => i.id)).toEqual(['inbox-1', 'work-1']);
+        expect(projection.items[0].area).toBe('inbox');
+        expect(projection.items[1].area).toBe('work');
+    });
+
+    it('defaults area to inbox when task has no area field', () => {
+        const tasks = [
+            { id: 'legacy', title: 'Legacy task', createdAt: '2026-02-24T09:00:00.000Z', todayIncluded: true },
+        ];
+
+        const projection = computeTodayProjection({ tasks, todayCap: 3 });
+
+        expect(projection.items[0].area).toBe('inbox');
+    });
 });

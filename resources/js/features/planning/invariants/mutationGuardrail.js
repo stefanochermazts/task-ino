@@ -5,9 +5,16 @@ import {
     removeTaskFromToday,
     setTaskPaused,
     setTaskArea as setTaskAreaInStore,
+    rescheduleTask as rescheduleTaskInStore,
+    bulkRescheduleTasks as bulkRescheduleTasksInStore,
+    enforceDailyContinuity as enforceDailyContinuityInStore,
+    retainTaskForDate as retainTaskForDateInStore,
 } from '../persistence/inboxTaskStore';
 import { readTodayCap } from '../persistence/todayCapStore';
+import { readLastPlanningDate, saveLastPlanningDate } from '../persistence/dayCycleStore';
+import { saveSyncMode } from '../persistence/syncModeStore';
 import { isValidArea } from '../persistence/areaStore';
+import { resolveSyncBatch, MERGE_INVARIANT_REJECT_CODE } from '../sync/syncBatchMerge';
 
 /** Stable domain error codes for blocked transitions */
 export const TODAY_CAP_EXCEEDED = 'TODAY_CAP_EXCEEDED';
@@ -16,10 +23,52 @@ export const REMOVE_TASK_NOT_IN_TODAY = 'REMOVE_TASK_NOT_IN_TODAY';
 export const INVARIANT_VIOLATION = 'INVARIANT_VIOLATION';
 export const CLOSURE_REQUIRED = 'CLOSURE_REQUIRED';
 export const INVALID_AREA = 'INVALID_AREA';
+export const INVALID_TEMPORAL_TARGET = 'INVALID_TEMPORAL_TARGET';
 
 function isValidTaskId(id) {
     const s = String(id ?? '').trim();
     return s.length > 0;
+}
+
+/**
+ * Normalize a temporal target to YYYY-MM-DD or null.
+ * @param {string|null|undefined} value - Raw input (ISO date, YYYY-MM-DD, or null to clear)
+ * @returns {string|null|undefined} - YYYY-MM-DD, null for clear, undefined if invalid
+ */
+function normalizeTemporalTarget(value) {
+    if (value === null || value === undefined) {
+        return null;
+    }
+    const s = String(value ?? '').trim();
+    if (s.length === 0) {
+        return null;
+    }
+    const parsed = Date.parse(s);
+    if (!Number.isFinite(parsed)) {
+        return undefined;
+    }
+    const d = new Date(parsed);
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getTodayYYYYMMDD() {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getTomorrowYYYYMMDD() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function normalizeResult(result) {
@@ -27,6 +76,30 @@ function normalizeResult(result) {
         const out = { ok: true };
         if (result.task !== undefined) {
             out.task = result.task;
+        }
+        if (result.taskIds !== undefined) {
+            out.taskIds = result.taskIds;
+        }
+        if (result.count !== undefined) {
+            out.count = result.count;
+        }
+        if (result.applied !== undefined) {
+            out.applied = result.applied;
+        }
+        if (result.updatedCount !== undefined) {
+            out.updatedCount = result.updatedCount;
+        }
+        if (result.markerSaved !== undefined) {
+            out.markerSaved = result.markerSaved;
+        }
+        if (result.enabled !== undefined) {
+            out.enabled = result.enabled;
+        }
+        if (result.resolvedTasks !== undefined) {
+            out.resolvedTasks = result.resolvedTasks;
+        }
+        if (result.conflicts !== undefined) {
+            out.conflicts = result.conflicts;
         }
         return out;
     }
@@ -41,7 +114,9 @@ function normalizeResult(result) {
                 ? 'Selected item is not in Today.'
                 : code === INVALID_AREA
                   ? 'Invalid area. Choose an existing area.'
-                  : 'Unable to save. Please retry.');
+                  : code === INVALID_TEMPORAL_TARGET
+                    ? 'Invalid date. Use a valid date (YYYY-MM-DD).'
+                    : 'Unable to save. Please retry.');
     return { ok: false, code, message };
 }
 
@@ -49,7 +124,7 @@ function normalizeResult(result) {
  * Single write-path guardrail for planning mutations.
  * All planning write operations MUST pass through this layer.
  *
- * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea'
+ * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea' | 'rescheduleTask' | 'bulkRescheduleTasks' | 'retainTaskForNextDay' | 'setSyncMode' | 'applyMergeBatch' | 'enforceDailyContinuity'
  * @param {object} params - Action-specific parameters
  * @returns {Promise<{ok: boolean, code?: string, message?: string, task?: object}>}
  */
@@ -149,6 +224,109 @@ export async function mutatePlanningState(action, params) {
             }
             const result = await setTaskAreaInStore(taskId, area);
             return normalizeResult(result);
+        }
+
+        if (action === 'rescheduleTask') {
+            const { taskId, scheduledFor } = params ?? {};
+            if (!isValidTaskId(taskId)) {
+                return {
+                    ok: false,
+                    code: INVARIANT_VIOLATION,
+                    message: 'Invalid task.',
+                };
+            }
+            const normalized = normalizeTemporalTarget(scheduledFor);
+            if (normalized === undefined) {
+                return {
+                    ok: false,
+                    code: INVALID_TEMPORAL_TARGET,
+                    message: 'Invalid date. Use a valid date (YYYY-MM-DD).',
+                };
+            }
+            const result = await rescheduleTaskInStore(taskId, normalized);
+            return normalizeResult(result);
+        }
+
+        if (action === 'bulkRescheduleTasks') {
+            const { taskIds, scheduledFor } = params ?? {};
+            const ids = Array.isArray(taskIds) ? [...new Set(taskIds)] : [];
+            if (ids.length === 0 || ids.some((id) => !isValidTaskId(id))) {
+                return {
+                    ok: false,
+                    code: INVARIANT_VIOLATION,
+                    message: 'Invalid task list.',
+                };
+            }
+            const normalized = normalizeTemporalTarget(scheduledFor);
+            if (normalized === undefined) {
+                return {
+                    ok: false,
+                    code: INVALID_TEMPORAL_TARGET,
+                    message: 'Invalid date. Use a valid date (YYYY-MM-DD).',
+                };
+            }
+            const result = await bulkRescheduleTasksInStore(ids, normalized);
+            return normalizeResult(result);
+        }
+
+        if (action === 'retainTaskForNextDay') {
+            const { taskId } = params ?? {};
+            if (!isValidTaskId(taskId)) {
+                return {
+                    ok: false,
+                    code: INVARIANT_VIOLATION,
+                    message: 'Invalid task.',
+                };
+            }
+            const tomorrow = getTomorrowYYYYMMDD();
+            const result = await retainTaskForDateInStore(taskId, tomorrow);
+            return normalizeResult(result);
+        }
+
+        if (action === 'setSyncMode') {
+            const enabled = params?.enabled === true;
+            const result = saveSyncMode(enabled);
+            if (!result.ok) {
+                return {
+                    ok: false,
+                    code: INVARIANT_VIOLATION,
+                    message: 'Unable to save sync mode. Please retry.',
+                };
+            }
+            return normalizeResult({ ok: true, enabled });
+        }
+
+        if (action === 'applyMergeBatch') {
+            const { localTasks, incomingMutations } = params ?? {};
+            const todayCap = readTodayCap();
+            const mergeResult = resolveSyncBatch({ localTasks, incomingMutations, todayCap });
+            if (!mergeResult.ok) {
+                return {
+                    ok: false,
+                    code: mergeResult.code ?? MERGE_INVARIANT_REJECT_CODE,
+                    message: mergeResult.message ?? 'Sync merge rejected due to invariant violation.',
+                };
+            }
+            return {
+                ok: true,
+                resolvedTasks: mergeResult.resolvedTasks,
+                conflicts: mergeResult.conflicts,
+                code: mergeResult.code,
+            };
+        }
+
+        if (action === 'enforceDailyContinuity') {
+            const today = getTodayYYYYMMDD();
+            const lastPlanningDate = readLastPlanningDate();
+            if (lastPlanningDate === today) {
+                return normalizeResult({ ok: true, applied: false, markerSaved: true });
+            }
+            const result = await enforceDailyContinuityInStore(today, lastPlanningDate);
+            if (result.ok && result.applied) {
+                const saved = saveLastPlanningDate(today);
+                return normalizeResult({ ...result, markerSaved: saved?.ok === true });
+            }
+            return normalizeResult({ ...result, markerSaved: false });
         }
 
         return {

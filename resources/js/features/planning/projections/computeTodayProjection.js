@@ -39,8 +39,13 @@ export function computeTodayProjection({ tasks, todayCap }) {
             return bCreatedAt - aCreatedAt;
         });
 
+    const items = eligible.slice(0, cap).map((task) => ({
+        ...task,
+        area: String(task?.area ?? 'inbox').trim().toLowerCase() || 'inbox',
+    }));
+
     return {
-        items: eligible.slice(0, cap),
+        items,
         totalEligible: eligible.length,
         cap,
     };

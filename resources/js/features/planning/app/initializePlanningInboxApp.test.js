@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createInboxTaskMock = vi.fn();
+const enforceDailyContinuityMock = vi.fn();
 const listInboxTasksMock = vi.fn();
 const renderInboxProjectionMock = vi.fn();
 const computeTodayProjectionMock = vi.fn();
@@ -8,12 +9,24 @@ const renderTodayProjectionMock = vi.fn();
 const addToTodayMock = vi.fn();
 const swapToTodayMock = vi.fn();
 const bulkAddToTodayMock = vi.fn();
+const bulkRescheduleTasksMock = vi.fn();
 const removeFromTodayMock = vi.fn();
 const pauseTaskMock = vi.fn();
+const retainTaskForNextDayMock = vi.fn();
 const setTaskAreaMock = vi.fn();
+const rescheduleTaskMock = vi.fn();
+const setSyncModeMock = vi.fn();
+
+vi.mock('../commands/setSyncMode', () => ({
+    setSyncMode: (...args) => setSyncModeMock(...args),
+}));
 
 vi.mock('../commands/setTaskArea', () => ({
     setTaskArea: (...args) => setTaskAreaMock(...args),
+}));
+
+vi.mock('../commands/rescheduleTask', () => ({
+    rescheduleTask: (...args) => rescheduleTaskMock(...args),
 }));
 
 vi.mock('../commands/createInboxTask', () => ({
@@ -29,6 +42,14 @@ vi.mock('../commands/bulkAddToToday', () => ({
     bulkAddToToday: (...args) => bulkAddToTodayMock(...args),
 }));
 
+vi.mock('../commands/bulkRescheduleTasks', () => ({
+    bulkRescheduleTasks: (...args) => bulkRescheduleTasksMock(...args),
+}));
+
+vi.mock('../commands/enforceDailyContinuity', () => ({
+    enforceDailyContinuity: (...args) => enforceDailyContinuityMock(...args),
+}));
+
 vi.mock('../commands/removeFromToday', () => ({
     removeFromToday: (...args) => removeFromTodayMock(...args),
 }));
@@ -37,8 +58,42 @@ vi.mock('../commands/pauseTask', () => ({
     pauseTask: (...args) => pauseTaskMock(...args),
 }));
 
+vi.mock('../commands/retainTaskForNextDay', () => ({
+    retainTaskForNextDay: (...args) => retainTaskForNextDayMock(...args),
+}));
+
+const reconcileFromRemoteMock = vi.fn();
+vi.mock('../commands/reconcileFromRemote', () => ({
+    reconcileFromRemote: (...args) => reconcileFromRemoteMock(...args),
+}));
+
+const exportPlanningDataMock = vi.fn();
+vi.mock('../commands/exportPlanningData', () => ({
+    exportPlanningData: (...args) => exportPlanningDataMock(...args),
+}));
+
+const resetSyncStateMock = vi.fn();
+vi.mock('../commands/resetSyncState', () => ({
+    resetSyncState: (...args) => resetSyncStateMock(...args),
+}));
+
+const deleteLocalPlanningDataMock = vi.fn();
+vi.mock('../commands/deleteLocalPlanningData', () => ({
+    deleteLocalPlanningData: (...args) => deleteLocalPlanningDataMock(...args),
+}));
+
+const deleteSyncedPlanningDataMock = vi.fn();
+vi.mock('../commands/deleteSyncedPlanningData', () => ({
+    deleteSyncedPlanningData: (...args) => deleteSyncedPlanningDataMock(...args),
+}));
+
 vi.mock('../persistence/inboxTaskStore', () => ({
     listInboxTasks: (...args) => listInboxTasksMock(...args),
+}));
+
+const readSyncModeMock = vi.fn();
+vi.mock('../persistence/syncModeStore', () => ({
+    readSyncMode: () => readSyncModeMock(),
 }));
 
 vi.mock('../persistence/areaStore', () => ({
@@ -79,6 +134,16 @@ function buildAppHtml() {
     document.body.innerHTML = `
         <section id="planning-app">
             <p id="network-status"></p>
+            <button id="sync-mode-toggle" type="button" aria-pressed="false">Sync: <span id="sync-mode-label">Off</span></button>
+            <button id="reconcile-btn" type="button">Check for updates</button>
+            <p id="sync-status">Sync status: offline</p>
+            <p id="sync-status-feedback" class="hidden"></p>
+            <button id="export-planning-btn" type="button">Export data</button>
+            <button id="reset-sync-btn" type="button">Reset sync</button>
+            <button id="delete-local-btn" type="button">Delete local data</button>
+            <button id="delete-synced-btn" type="button">Delete synced data</button>
+            <p id="export-feedback"></p>
+            <p id="control-feedback"></p>
             <form id="quick-capture-form">
                 <input id="quick-capture-input" />
                 <button id="quick-capture-submit" type="submit">Add</button>
@@ -128,6 +193,7 @@ function buildAppHtml() {
     `;
     localStorage.removeItem('planning.todayCap');
     localStorage.removeItem('planning.areas');
+    localStorage.removeItem('planning.syncFailureSimulation');
 }
 
 async function flushAsyncWork() {
@@ -147,7 +213,10 @@ describe('initializePlanningInboxApp', () => {
         bulkAddToTodayMock.mockResolvedValue({ ok: true });
         removeFromTodayMock.mockResolvedValue({ ok: true });
         pauseTaskMock.mockResolvedValue({ ok: true });
+        retainTaskForNextDayMock.mockResolvedValue({ ok: true });
         setTaskAreaMock.mockResolvedValue({ ok: true });
+        setSyncModeMock.mockResolvedValue({ ok: true });
+        readSyncModeMock.mockReturnValue('disabled');
         listInboxTasksMock.mockResolvedValue([]);
         computeTodayProjectionMock.mockReturnValue({
             items: [],
@@ -155,6 +224,32 @@ describe('initializePlanningInboxApp', () => {
             cap: 3,
         });
         createInboxTaskMock.mockResolvedValue({ ok: true, task: { id: 't1', title: 'Test' } });
+        enforceDailyContinuityMock.mockResolvedValue({ ok: true });
+        window.taskinoSync = undefined;
+        exportPlanningDataMock.mockResolvedValue({ ok: true, json: '{}', filename: 'export.json' });
+        resetSyncStateMock.mockResolvedValue({ ok: true });
+        deleteLocalPlanningDataMock.mockResolvedValue({ ok: true });
+        deleteSyncedPlanningDataMock.mockResolvedValue({ ok: true });
+        window.confirm = vi.fn().mockReturnValue(false);
+    });
+
+    it('calls enforceDailyContinuity before refreshInbox on startup', async () => {
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        const callOrder = [];
+        enforceDailyContinuityMock.mockImplementation(() => {
+            callOrder.push('enforceDailyContinuity');
+            return Promise.resolve({ ok: true });
+        });
+        listInboxTasksMock.mockImplementation(() => {
+            callOrder.push('listInboxTasks');
+            return Promise.resolve([]);
+        });
+
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        expect(callOrder).toEqual(['enforceDailyContinuity', 'listInboxTasks']);
+        expect(enforceDailyContinuityMock).toHaveBeenCalledTimes(1);
     });
 
     it('submits capture and refreshes inbox projection immediately', async () => {
@@ -211,6 +306,327 @@ describe('initializePlanningInboxApp', () => {
         expect(networkStatus.textContent).toContain('Capture remains immediate');
     });
 
+    it('shows forced offline simulation messaging and keeps capture available', async () => {
+        localStorage.setItem('planning.syncFailureSimulation', 'true');
+        setOnlineStatus(true);
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const networkStatus = document.querySelector('#network-status');
+        expect(networkStatus.textContent).toContain('Offline (simulated)');
+        expect(networkStatus.textContent).toContain('Capture remains immediate');
+    });
+
+    it('toggles sync mode deterministically and guards against double-click races', async () => {
+        readSyncModeMock.mockReturnValue('disabled');
+        let resolveToggle;
+        setSyncModeMock.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveToggle = resolve;
+                }),
+        );
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const toggle = document.querySelector('#sync-mode-toggle');
+        const label = document.querySelector('#sync-mode-label');
+        const syncStatus = document.querySelector('#sync-status');
+        expect(toggle).toBeTruthy();
+        expect(label).toBeTruthy();
+        expect(label.textContent).toBe('Off');
+        expect(syncStatus.textContent).toContain('offline');
+
+        toggle.click();
+        expect(toggle.disabled).toBe(true);
+        expect(syncStatus.textContent).toContain('syncing');
+        toggle.click();
+        expect(setSyncModeMock).toHaveBeenCalledTimes(1);
+
+        resolveToggle({ ok: true });
+        await flushAsyncWork();
+        expect(toggle.disabled).toBe(false);
+        expect(setSyncModeMock).toHaveBeenCalledWith(true);
+
+        readSyncModeMock.mockReturnValue('enabled');
+        setSyncModeMock.mockResolvedValue({ ok: true });
+        toggle.click();
+        await flushAsyncWork();
+        expect(setSyncModeMock).toHaveBeenCalledWith(false);
+    });
+
+    it('shows sanitized actionable sync error feedback without exposing raw exception text', async () => {
+        readSyncModeMock.mockReturnValue('enabled');
+        setSyncModeMock.mockResolvedValue({
+            ok: false,
+            code: 'INVARIANT_VIOLATION',
+            message: 'TypeError: Cannot read properties of undefined at sync.js:99',
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const toggle = document.querySelector('#sync-mode-toggle');
+        const feedback = document.querySelector('#sync-status-feedback');
+        const status = document.querySelector('#sync-status');
+
+        toggle.click();
+        await flushAsyncWork();
+
+        expect(status.textContent).toContain('retrying');
+        expect(feedback.classList.contains('hidden')).toBe(false);
+        expect(feedback.textContent).toContain('Sync could not complete right now.');
+        expect(feedback.textContent).toContain('retry later');
+        expect(feedback.textContent).not.toContain('TypeError');
+        expect(feedback.textContent).not.toContain('sync.js:99');
+    });
+
+    it('shows alignment feedback when reconciliation runs and succeeds', async () => {
+        readSyncModeMock.mockReturnValue('enabled');
+        setSyncModeMock.mockResolvedValue({ ok: true });
+        listInboxTasksMock.mockResolvedValue([]);
+        reconcileFromRemoteMock.mockResolvedValue({ ok: true, conflicts: 0 });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const root = document.querySelector('#planning-app');
+        const feedback = document.querySelector('#sync-status-feedback');
+        root.dispatchEvent(new CustomEvent('planning:reconcile', { detail: { mutations: [] } }));
+        expect(feedback.textContent).toContain('Aligning');
+        expect(reconcileFromRemoteMock).toHaveBeenCalledWith([]);
+
+        await flushAsyncWork();
+        expect(feedback.textContent).toContain('Plan aligned');
+    });
+
+    it('reconcile button dispatches planning:reconcile when sync is enabled', async () => {
+        readSyncModeMock.mockReturnValue('enabled');
+        setSyncModeMock.mockResolvedValue({ ok: true });
+        listInboxTasksMock.mockResolvedValue([]);
+        reconcileFromRemoteMock.mockResolvedValue({ ok: true, conflicts: 0 });
+        window.taskinoSync = {
+            fetchRemoteMutations: vi.fn().mockResolvedValue([{ id: 'r1', timestamp: 1000, device_id: 'remote' }]),
+        };
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const reconcileBtn = document.querySelector('#reconcile-btn');
+        expect(reconcileBtn.disabled).toBe(false);
+        reconcileBtn.click();
+        await flushAsyncWork();
+        expect(window.taskinoSync.fetchRemoteMutations).toHaveBeenCalledTimes(1);
+        expect(reconcileFromRemoteMock).toHaveBeenCalledWith([{ id: 'r1', timestamp: 1000, device_id: 'remote' }]);
+    });
+
+    it('reconcile button is disabled when sync is off', async () => {
+        readSyncModeMock.mockReturnValue('disabled');
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const reconcileBtn = document.querySelector('#reconcile-btn');
+        expect(reconcileBtn.disabled).toBe(true);
+    });
+
+    it('export button triggers export and shows success feedback', async () => {
+        exportPlanningDataMock.mockResolvedValue({
+            ok: true,
+            json: '{"version":1,"tasks":[]}',
+            filename: 'taskino-planning-20260302-1200.json',
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const exportBtn = document.querySelector('#export-planning-btn');
+        const exportFeedback = document.querySelector('#export-feedback');
+        exportBtn.click();
+        await flushAsyncWork();
+
+        expect(exportPlanningDataMock).toHaveBeenCalledTimes(1);
+        expect(exportFeedback.textContent).toContain('Export downloaded');
+    });
+
+    it('export button shows failure feedback when export fails', async () => {
+        exportPlanningDataMock.mockResolvedValue({
+            ok: false,
+            code: 'EXPORT_FAILED',
+            message: 'Export is temporarily unavailable. Please retry.',
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const exportBtn = document.querySelector('#export-planning-btn');
+        const exportFeedback = document.querySelector('#export-feedback');
+        exportBtn.click();
+        await flushAsyncWork();
+
+        expect(exportPlanningDataMock).toHaveBeenCalledTimes(1);
+        expect(exportFeedback.textContent).toContain('Export is temporarily unavailable');
+    });
+
+    it('export button succeeds while offline (integration)', async () => {
+        setOnlineStatus(false);
+        exportPlanningDataMock.mockResolvedValue({
+            ok: true,
+            json: '{"version":1,"tasks":[{"id":"t1","title":"Offline task"}]}',
+            filename: 'taskino-planning-20260302-1200.json',
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const networkStatus = document.querySelector('#network-status');
+        const exportBtn = document.querySelector('#export-planning-btn');
+        const exportFeedback = document.querySelector('#export-feedback');
+        exportBtn.click();
+        await flushAsyncWork();
+
+        expect(networkStatus.textContent).toContain('Offline');
+        expect(exportPlanningDataMock).toHaveBeenCalledTimes(1);
+        expect(exportFeedback.textContent).toContain('Export downloaded');
+    });
+
+    it('reset sync button requires confirmation and does not call reset when cancelled', async () => {
+        window.confirm = vi.fn().mockReturnValue(false);
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const resetBtn = document.querySelector('#reset-sync-btn');
+        resetBtn.click();
+        await flushAsyncWork();
+
+        expect(window.confirm).toHaveBeenCalledTimes(1);
+        expect(resetSyncStateMock).not.toHaveBeenCalled();
+    });
+
+    it('reset sync button calls reset with confirmation and updates sync UI', async () => {
+        window.confirm = vi.fn().mockReturnValue(true);
+        resetSyncStateMock.mockResolvedValue({ ok: true });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const resetBtn = document.querySelector('#reset-sync-btn');
+        const controlFeedback = document.querySelector('#control-feedback');
+        resetBtn.click();
+        await flushAsyncWork();
+
+        expect(window.confirm).toHaveBeenCalledTimes(1);
+        expect(resetSyncStateMock).toHaveBeenCalledWith({ confirmed: true });
+        expect(controlFeedback.textContent).toContain('Sync reset');
+    });
+
+    it('delete local button requires confirmation and does not call delete when cancelled', async () => {
+        window.confirm = vi.fn().mockReturnValue(false);
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const deleteLocalBtn = document.querySelector('#delete-local-btn');
+        deleteLocalBtn.click();
+        await flushAsyncWork();
+
+        expect(window.confirm).toHaveBeenCalledTimes(1);
+        expect(deleteLocalPlanningDataMock).not.toHaveBeenCalled();
+    });
+
+    it('delete local button calls delete, refreshes, and shows feedback', async () => {
+        window.confirm = vi.fn().mockReturnValue(true);
+        listInboxTasksMock.mockResolvedValue([{ id: 'after-delete', title: 'Rebuilt', todayIncluded: false }]);
+        deleteLocalPlanningDataMock.mockResolvedValue({ ok: true });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        const deleteLocalBtn = document.querySelector('#delete-local-btn');
+        const controlFeedback = document.querySelector('#control-feedback');
+        deleteLocalBtn.click();
+        await flushAsyncWork();
+
+        expect(deleteLocalPlanningDataMock).toHaveBeenCalledWith({ confirmed: true });
+        expect(controlFeedback.textContent).toContain('Local data deleted');
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThan(initialListCalls);
+    });
+
+    it('delete synced button requires confirmation and does not call delete when cancelled', async () => {
+        window.confirm = vi.fn().mockReturnValue(false);
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const deleteSyncedBtn = document.querySelector('#delete-synced-btn');
+        deleteSyncedBtn.click();
+        await flushAsyncWork();
+
+        expect(window.confirm).toHaveBeenCalledTimes(1);
+        expect(deleteSyncedPlanningDataMock).not.toHaveBeenCalled();
+    });
+
+    it('delete synced button surfaces sanitized failure feedback', async () => {
+        window.confirm = vi.fn().mockReturnValue(true);
+        deleteSyncedPlanningDataMock.mockResolvedValue({
+            ok: false,
+            code: 'SYNCED_DELETE_FAILED',
+            message: 'Synced deletion could not be confirmed. Please retry.',
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const deleteSyncedBtn = document.querySelector('#delete-synced-btn');
+        const controlFeedback = document.querySelector('#control-feedback');
+        deleteSyncedBtn.click();
+        await flushAsyncWork();
+
+        expect(deleteSyncedPlanningDataMock).toHaveBeenCalledWith({ confirmed: true });
+        expect(controlFeedback.textContent).toContain('could not be confirmed');
+    });
+
+    it('shows non-blocking sync provider feedback when reconcile provider is missing', async () => {
+        readSyncModeMock.mockReturnValue('enabled');
+        window.taskinoSync = undefined;
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const reconcileBtn = document.querySelector('#reconcile-btn');
+        const feedback = document.querySelector('#sync-status-feedback');
+        reconcileBtn.click();
+        await flushAsyncWork();
+
+        expect(feedback.textContent).toContain('Sync provider is not configured yet.');
+    });
+
+    it('planning capture succeeds regardless of sync mode (runtime isolation)', async () => {
+        readSyncModeMock.mockReturnValue('enabled');
+        createInboxTaskMock.mockResolvedValue({ ok: true, task: { id: 't1', title: 'New task' } });
+        listInboxTasksMock.mockResolvedValue([{ id: 't1', title: 'New task', todayIncluded: false }]);
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        const form = document.querySelector('#quick-capture-form');
+        const input = document.querySelector('#quick-capture-input');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        input.value = 'New task';
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await flushAsyncWork();
+
+        expect(createInboxTaskMock).toHaveBeenCalledWith('New task');
+        expect(document.querySelector('#quick-capture-feedback').textContent).toContain('added');
+    });
+
     it('computes and renders deterministic today projection from local state', async () => {
         listInboxTasksMock.mockResolvedValue([
             { id: 'a', title: 'A', createdAt: '2026-02-24T08:00:00.000Z', todayIncluded: true },
@@ -232,7 +648,11 @@ describe('initializePlanningInboxApp', () => {
             tasks: expect.any(Array),
             todayCap: 3,
         });
-        expect(renderTodayProjectionMock).toHaveBeenCalledWith(todayProjection, expect.any(Object));
+        expect(renderTodayProjectionMock).toHaveBeenCalledWith(
+            todayProjection,
+            expect.any(Object),
+            expect.objectContaining({ onRemoveFromToday: expect.any(Function) }),
+        );
     });
 
     it('computes today projection from local state when offline', async () => {
@@ -569,6 +989,7 @@ describe('initializePlanningInboxApp', () => {
         expect(itemList.textContent).toContain('Today 2');
         expect(itemList.querySelectorAll('.defer-btn').length).toBe(2);
         expect(itemList.querySelectorAll('.pause-btn').length).toBe(2);
+        expect(itemList.querySelectorAll('.retain-btn').length).toBe(2);
         const firstDecisionBtn = itemList.querySelector('.defer-btn');
         expect(document.activeElement).toBe(firstDecisionBtn);
     });
@@ -672,6 +1093,55 @@ describe('initializePlanningInboxApp', () => {
         await flushAsyncWork();
 
         expect(pauseTaskMock).toHaveBeenCalledWith('t1');
+        const closureCompleteMsg = document.querySelector('#closure-complete-msg');
+        expect(closureCompleteMsg.classList.contains('hidden')).toBe(false);
+        expect(closureCompleteMsg.textContent).toBe('Day closed. Well done.');
+    });
+
+    it('retains an item for tomorrow from closure panel and updates Today', async () => {
+        const tasks = [{ id: 't1', title: 'Today 1', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' }];
+        const updatedTasks = [
+            { id: 't1', title: 'Today 1', todayIncluded: false, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock
+            .mockResolvedValueOnce(tasks) // initial load (refreshInbox)
+            .mockResolvedValueOnce(tasks) // panel open (updateClosurePanel)
+            .mockResolvedValueOnce(updatedTasks); // refreshInbox after retain
+        computeTodayProjectionMock
+            .mockReturnValueOnce({
+                items: [{ id: 't1', title: 'Today 1' }],
+                totalEligible: 1,
+                cap: 3,
+            })
+            .mockReturnValueOnce({
+                items: [{ id: 't1', title: 'Today 1' }],
+                totalEligible: 1,
+                cap: 3,
+            })
+            .mockReturnValueOnce({
+                items: [],
+                totalEligible: 0,
+                cap: 3,
+            })
+            .mockReturnValueOnce({
+                items: [],
+                totalEligible: 0,
+                cap: 3,
+            });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const closeDayBtn = document.querySelector('#close-day-btn');
+        closeDayBtn.dispatchEvent(new Event('click', { bubbles: true }));
+        await flushAsyncWork();
+
+        const retainBtn = document.querySelector('#closure-panel .retain-btn');
+        retainBtn.dispatchEvent(new Event('click', { bubbles: true }));
+        await flushAsyncWork();
+
+        expect(retainTaskForNextDayMock).toHaveBeenCalledWith('t1');
         const closureCompleteMsg = document.querySelector('#closure-complete-msg');
         expect(closureCompleteMsg.classList.contains('hidden')).toBe(false);
         expect(closureCompleteMsg.textContent).toBe('Day closed. Well done.');
@@ -1076,5 +1546,336 @@ describe('initializePlanningInboxApp', () => {
         expect(areaFeedback.textContent).toBe('Invalid area. Choose an existing area.');
         expect(areaFeedback.classList.contains('hidden')).toBe(false);
         expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
+    });
+
+    it('Today projection receives cross-area tasks and passes items with area to render', async () => {
+        const tasks = [
+            { id: 't1', title: 'Inbox task', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Work task', area: 'work', todayIncluded: true, createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const projectionArg = renderTodayProjectionMock.mock.calls[0][0];
+        expect(projectionArg.items).toHaveLength(2);
+        expect(projectionArg.items.map((i) => i.area)).toContain('inbox');
+        expect(projectionArg.items.map((i) => i.area)).toContain('work');
+    });
+
+    it('renders area origin in Today list through app integration flow', async () => {
+        const tasks = [
+            { id: 't1', title: 'Inbox task', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Work task', area: 'work', todayIncluded: true, createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        const { renderTodayProjection } = await vi.importActual('../projections/renderTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        renderTodayProjectionMock.mockImplementation((projection, ui, options) =>
+            renderTodayProjection(projection, ui, options),
+        );
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const todayList = document.querySelector('#today-list');
+        const renderedText = todayList.textContent;
+        expect(renderedText).toContain('Inbox task');
+        expect(renderedText).toContain('Work task');
+        expect(renderedText).toContain('Inbox');
+        expect(renderedText).toContain('Work');
+    });
+
+    it('Remove from Today button calls removeFromToday and refreshes inbox', async () => {
+        const tasks = [
+            { id: 't1', title: 'In Today', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        removeFromTodayMock.mockResolvedValue({ ok: true });
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        const { renderTodayProjection } = await vi.importActual('../projections/renderTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        renderTodayProjectionMock.mockImplementation((projection, ui, options) =>
+            renderTodayProjection(projection, ui, options),
+        );
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const removeBtn = document.querySelector('[data-action="remove-from-today"]');
+        expect(removeBtn).not.toBeNull();
+        removeBtn.click();
+        await flushAsyncWork();
+
+        expect(removeFromTodayMock).toHaveBeenCalledWith('t1');
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('Remove from Today shows feedback and does not refresh when mutation is blocked', async () => {
+        const tasks = [
+            { id: 't1', title: 'In Today', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        removeFromTodayMock.mockResolvedValueOnce({
+            ok: false,
+            code: 'REMOVE_TASK_NOT_IN_TODAY',
+            message: 'Selected item is not in Today.',
+        });
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        const { renderTodayProjection } = await vi.importActual('../projections/renderTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        renderTodayProjectionMock.mockImplementation((projection, ui, options) =>
+            renderTodayProjection(projection, ui, options),
+        );
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        const removeBtn = document.querySelector('[data-action="remove-from-today"]');
+        expect(removeBtn).not.toBeNull();
+        removeBtn.click();
+        await flushAsyncWork();
+
+        expect(removeFromTodayMock).toHaveBeenCalledWith('t1');
+        expect(document.querySelector('#quick-capture-feedback').textContent).toBe('Selected item is not in Today.');
+        expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
+    });
+
+    it('onSetTaskArea keeps Today membership unchanged in app integration flow', async () => {
+        const initialTasks = [
+            { id: 't1', title: 'Today task', area: 'inbox', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        const updatedTasks = [
+            { id: 't1', title: 'Today task', area: 'work', todayIncluded: true, createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock
+            .mockResolvedValueOnce(initialTasks)
+            .mockResolvedValueOnce(updatedTasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        await capturedOptions.onSetTaskArea('t1', 'work');
+        await flushAsyncWork();
+
+        expect(setTaskAreaMock).toHaveBeenCalledWith('t1', 'work');
+        const latestProjection = renderTodayProjectionMock.mock.calls.at(-1)[0];
+        expect(latestProjection.items).toHaveLength(1);
+        expect(latestProjection.items[0].id).toBe('t1');
+        expect(latestProjection.items[0].area).toBe('work');
+    });
+
+    it('onRescheduleTask triggers command and refreshes inbox on success', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        rescheduleTaskMock.mockResolvedValue({ ok: true });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await capturedOptions.onRescheduleTask('t1', '2026-03-15');
+        await flushAsyncWork();
+
+        expect(rescheduleTaskMock).toHaveBeenCalledWith('t1', '2026-03-15');
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThan(initialListCalls);
+        expect(renderInboxProjectionMock.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('onRescheduleTask shows area feedback when invalid temporal target', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        rescheduleTaskMock.mockResolvedValueOnce({
+            ok: false,
+            code: 'INVALID_TEMPORAL_TARGET',
+            message: 'Invalid date. Use a valid date (YYYY-MM-DD).',
+        });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await capturedOptions.onRescheduleTask('t1', 'not-a-date');
+        await flushAsyncWork();
+
+        const areaFeedback = document.querySelector('#area-feedback');
+        expect(areaFeedback.textContent).toBe('Invalid date. Use a valid date (YYYY-MM-DD).');
+        expect(areaFeedback.classList.contains('hidden')).toBe(false);
+        expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
+    });
+
+    it('renderInboxProjection receives onRescheduleTask callback', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const lastCall = renderInboxProjectionMock.mock.calls.at(-1);
+        const options = lastCall[2];
+        expect(options.onRescheduleTask).toBeDefined();
+        expect(typeof options.onRescheduleTask).toBe('function');
+    });
+
+    it('reschedule does not alter area or Today membership (regression)', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: true, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+        ];
+        const updatedTasks = [
+            {
+                id: 't1',
+                title: 'Task 1',
+                todayIncluded: true,
+                area: 'inbox',
+                scheduledFor: '2026-03-20',
+                createdAt: '2026-02-24T08:00:00.000Z',
+            },
+        ];
+        listInboxTasksMock.mockResolvedValueOnce(tasks).mockResolvedValueOnce(updatedTasks);
+        const { computeTodayProjection } = await vi.importActual('../projections/computeTodayProjection');
+        computeTodayProjectionMock.mockImplementation((args) => computeTodayProjection(args));
+        rescheduleTaskMock.mockResolvedValue({ ok: true, task: updatedTasks[0] });
+
+        let capturedOptions;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, options) => {
+            capturedOptions = options;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        await capturedOptions.onRescheduleTask('t1', '2026-03-20');
+        await flushAsyncWork();
+
+        expect(rescheduleTaskMock).toHaveBeenCalledWith('t1', '2026-03-20');
+        const lastProjectionTasks = renderInboxProjectionMock.mock.calls.at(-1)[0];
+        const task = lastProjectionTasks.find((t) => t.id === 't1');
+        expect(task).toBeDefined();
+        expect(task.area).toBe('inbox');
+        expect(task.todayIncluded).toBe(true);
+    });
+
+    it('renderInboxProjection receives bulk reschedule callbacks and selection state', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Task 2', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const options = renderInboxProjectionMock.mock.calls.at(-1)[2];
+        expect(typeof options.onToggleBulkSelection).toBe('function');
+        expect(typeof options.onBulkRescheduleTasks).toBe('function');
+        expect(Array.isArray(options.selectedTaskIds)).toBe(true);
+    });
+
+    it('onBulkRescheduleTasks shows success feedback with affected tasks and refreshes', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Task 2', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        bulkRescheduleTasksMock.mockResolvedValue({ ok: true, taskIds: ['t1', 't2'], count: 2 });
+
+        let options;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, opts) => {
+            options = opts;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await options.onBulkRescheduleTasks(['t1', 't2'], '2026-07-01');
+        await flushAsyncWork();
+
+        expect(bulkRescheduleTasksMock).toHaveBeenCalledWith(['t1', 't2'], '2026-07-01');
+        const areaFeedback = document.querySelector('#area-feedback');
+        expect(areaFeedback.textContent).toContain('Bulk reschedule succeeded');
+        expect(areaFeedback.textContent).toContain('t1');
+        expect(areaFeedback.classList.contains('hidden')).toBe(false);
+        expect(listInboxTasksMock.mock.calls.length).toBeGreaterThan(initialListCalls);
+    });
+
+    it('onBulkRescheduleTasks shows failure feedback with requested task list, clears selection, and no refresh', async () => {
+        const tasks = [
+            { id: 't1', title: 'Task 1', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T08:00:00.000Z' },
+            { id: 't2', title: 'Task 2', todayIncluded: false, area: 'inbox', createdAt: '2026-02-24T09:00:00.000Z' },
+        ];
+        listInboxTasksMock.mockResolvedValue(tasks);
+        computeTodayProjectionMock.mockReturnValue({ items: [], totalEligible: 0, cap: 3 });
+        bulkRescheduleTasksMock.mockResolvedValue({
+            ok: false,
+            code: 'TASK_NOT_FOUND',
+            message: 'Task not found.',
+        });
+
+        let options;
+        renderInboxProjectionMock.mockImplementation((_tasks, _ui, opts) => {
+            options = opts;
+        });
+
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const initialListCalls = listInboxTasksMock.mock.calls.length;
+        await options.onBulkRescheduleTasks(['t1', 't2'], '2026-07-01');
+        await flushAsyncWork();
+
+        expect(bulkRescheduleTasksMock).toHaveBeenCalledWith(['t1', 't2'], '2026-07-01');
+        const areaFeedback = document.querySelector('#area-feedback');
+        expect(areaFeedback.textContent).toContain('Task not found.');
+        expect(areaFeedback.textContent).toContain('Requested tasks: t1, t2');
+        expect(areaFeedback.classList.contains('hidden')).toBe(false);
+        expect(listInboxTasksMock.mock.calls.length).toBe(initialListCalls);
+        const latestOptions = renderInboxProjectionMock.mock.calls.at(-1)[2];
+        expect(latestOptions.selectedTaskIds).toEqual([]);
     });
 });

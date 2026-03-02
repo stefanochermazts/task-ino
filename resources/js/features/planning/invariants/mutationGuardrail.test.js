@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     mutatePlanningState,
     TODAY_CAP_EXCEEDED,
@@ -6,6 +6,7 @@ import {
     REMOVE_TASK_NOT_IN_TODAY,
     INVARIANT_VIOLATION,
     INVALID_AREA,
+    INVALID_TEMPORAL_TARGET,
 } from './mutationGuardrail';
 
 const addTaskToTodayWithCapMock = vi.fn();
@@ -14,10 +15,27 @@ const bulkAddTasksToTodayMock = vi.fn();
 const removeTaskFromTodayMock = vi.fn();
 const setTaskPausedMock = vi.fn();
 const setTaskAreaInStoreMock = vi.fn();
+const rescheduleTaskInStoreMock = vi.fn();
+const bulkRescheduleTasksInStoreMock = vi.fn();
+const enforceDailyContinuityInStoreMock = vi.fn();
+const retainTaskForDateInStoreMock = vi.fn();
+const readLastPlanningDateMock = vi.fn();
+const saveLastPlanningDateMock = vi.fn();
 const isValidAreaMock = vi.fn();
 
 vi.mock('../persistence/todayCapStore', () => ({
     readTodayCap: () => 3,
+}));
+
+vi.mock('../persistence/dayCycleStore', () => ({
+    readLastPlanningDate: () => readLastPlanningDateMock(),
+    saveLastPlanningDate: (date) => saveLastPlanningDateMock(date),
+}));
+
+const saveSyncModeMock = vi.fn();
+vi.mock('../persistence/syncModeStore', () => ({
+    readSyncMode: () => 'disabled',
+    saveSyncMode: (enabled) => saveSyncModeMock(enabled),
 }));
 
 vi.mock('../persistence/inboxTaskStore', () => ({
@@ -28,6 +46,12 @@ vi.mock('../persistence/inboxTaskStore', () => ({
     removeTaskFromToday: (taskId) => removeTaskFromTodayMock(taskId),
     setTaskPaused: (taskId) => setTaskPausedMock(taskId),
     setTaskArea: (taskId, area) => setTaskAreaInStoreMock(taskId, area),
+    rescheduleTask: (taskId, scheduledFor) => rescheduleTaskInStoreMock(taskId, scheduledFor),
+    bulkRescheduleTasks: (taskIds, scheduledFor) =>
+        bulkRescheduleTasksInStoreMock(taskIds, scheduledFor),
+    enforceDailyContinuity: (today, lastPlanningDate) =>
+        enforceDailyContinuityInStoreMock(today, lastPlanningDate),
+    retainTaskForDate: (taskId, retainedFor) => retainTaskForDateInStoreMock(taskId, retainedFor),
 }));
 
 vi.mock('../persistence/areaStore', () => ({
@@ -416,6 +440,405 @@ describe('mutationGuardrail', () => {
 
             expect(result.ok).toBe(false);
             expect(result.code).toBe(INVARIANT_VIOLATION);
+        });
+    });
+
+    describe('rescheduleTask action', () => {
+        it('returns success when persistence succeeds', async () => {
+            rescheduleTaskInStoreMock.mockResolvedValue({
+                ok: true,
+                task: { id: 't1', scheduledFor: '2026-03-01', updatedAt: '2026-02-23T15:00:00.000Z' },
+            });
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.task.scheduledFor).toBe('2026-03-01');
+            expect(rescheduleTaskInStoreMock).toHaveBeenCalledWith('t1', '2026-03-01');
+        });
+
+        it('rejects invalid temporal target and does not call persistence', async () => {
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: 'invalid-date-xyz',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVALID_TEMPORAL_TARGET);
+            expect(rescheduleTaskInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns TASK_NOT_FOUND with explicit code when task missing', async () => {
+            rescheduleTaskInStoreMock.mockResolvedValue({
+                ok: false,
+                code: 'TASK_NOT_FOUND',
+            });
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 'missing',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(TASK_NOT_FOUND);
+        });
+
+        it('rejects invalid taskId with INVARIANT_VIOLATION', async () => {
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: '',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(rescheduleTaskInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('accepts null to clear scheduledFor', async () => {
+            rescheduleTaskInStoreMock.mockResolvedValue({
+                ok: true,
+                task: { id: 't1', scheduledFor: null, updatedAt: '2026-02-23T15:00:00.000Z' },
+            });
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: null,
+            });
+
+            expect(result.ok).toBe(true);
+            expect(rescheduleTaskInStoreMock).toHaveBeenCalledWith('t1', null);
+        });
+
+        it('returns INVARIANT_VIOLATION when persistence throws', async () => {
+            rescheduleTaskInStoreMock.mockRejectedValue(new Error('db error'));
+
+            const result = await mutatePlanningState('rescheduleTask', {
+                taskId: 't1',
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+        });
+    });
+
+    describe('bulkRescheduleTasks action', () => {
+        it('returns success when persistence succeeds', async () => {
+            bulkRescheduleTasksInStoreMock.mockResolvedValue({
+                ok: true,
+                taskIds: ['t1', 't2'],
+                count: 2,
+            });
+
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 't2', 't2'],
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.taskIds).toEqual(['t1', 't2']);
+            expect(result.count).toBe(2);
+            expect(bulkRescheduleTasksInStoreMock).toHaveBeenCalledWith(['t1', 't2'], '2026-03-01');
+        });
+
+        it('rejects invalid task list', async () => {
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: [],
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(bulkRescheduleTasksInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('rejects invalid temporal target', async () => {
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 't2'],
+                scheduledFor: 'bad-date',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVALID_TEMPORAL_TARGET);
+            expect(bulkRescheduleTasksInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns TASK_NOT_FOUND when persistence reports missing task', async () => {
+            bulkRescheduleTasksInStoreMock.mockResolvedValue({
+                ok: false,
+                code: 'TASK_NOT_FOUND',
+            });
+
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 'missing'],
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(TASK_NOT_FOUND);
+        });
+
+        it('returns INVARIANT_VIOLATION when persistence throws', async () => {
+            bulkRescheduleTasksInStoreMock.mockRejectedValue(new Error('db error'));
+
+            const result = await mutatePlanningState('bulkRescheduleTasks', {
+                taskIds: ['t1', 't2'],
+                scheduledFor: '2026-03-01',
+            });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+        });
+    });
+
+    describe('enforceDailyContinuity action', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-02-23T12:00:00.000Z'));
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('returns applied false when lastPlanningDate equals today (idempotent)', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-23');
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(false);
+            expect(result.markerSaved).toBe(true);
+            expect(enforceDailyContinuityInStoreMock).not.toHaveBeenCalled();
+            expect(saveLastPlanningDateMock).not.toHaveBeenCalled();
+        });
+
+        it('calls store and saves lastPlanningDate when lastPlanningDate differs from today', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-22');
+            enforceDailyContinuityInStoreMock.mockResolvedValue({
+                ok: true,
+                applied: true,
+                updatedCount: 2,
+            });
+            saveLastPlanningDateMock.mockReturnValue({ ok: true });
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(true);
+            expect(result.updatedCount).toBe(2);
+            expect(result.markerSaved).toBe(true);
+            expect(enforceDailyContinuityInStoreMock).toHaveBeenCalledWith(
+                '2026-02-23',
+                '2026-02-22',
+            );
+            expect(saveLastPlanningDateMock).toHaveBeenCalledWith('2026-02-23');
+        });
+
+        it('calls store when lastPlanningDate is null (first run)', async () => {
+            readLastPlanningDateMock.mockReturnValue(null);
+            enforceDailyContinuityInStoreMock.mockResolvedValue({
+                ok: true,
+                applied: true,
+                updatedCount: 0,
+            });
+            saveLastPlanningDateMock.mockReturnValue({ ok: true });
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.markerSaved).toBe(true);
+            expect(enforceDailyContinuityInStoreMock).toHaveBeenCalledWith(
+                '2026-02-23',
+                null,
+            );
+            expect(saveLastPlanningDateMock).toHaveBeenCalledWith('2026-02-23');
+        });
+
+        it('does not save lastPlanningDate when store returns applied false', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-22');
+            enforceDailyContinuityInStoreMock.mockResolvedValue({
+                ok: true,
+                applied: false,
+            });
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(true);
+            expect(result.applied).toBe(false);
+            expect(result.markerSaved).toBe(false);
+            expect(saveLastPlanningDateMock).not.toHaveBeenCalled();
+        });
+
+        it('returns INVARIANT_VIOLATION when store throws', async () => {
+            readLastPlanningDateMock.mockReturnValue('2026-02-22');
+            enforceDailyContinuityInStoreMock.mockRejectedValue(new Error('db error'));
+
+            const result = await mutatePlanningState('enforceDailyContinuity', {});
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(saveLastPlanningDateMock).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('retainTaskForNextDay action', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-02-23T12:00:00.000Z'));
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('calls retainTaskForDate with computed tomorrow', async () => {
+            retainTaskForDateInStoreMock.mockResolvedValue({
+                ok: true,
+                task: { id: 't1', retainedFor: '2026-02-24', todayIncluded: false },
+            });
+
+            const result = await mutatePlanningState('retainTaskForNextDay', { taskId: 't1' });
+
+            expect(result.ok).toBe(true);
+            expect(retainTaskForDateInStoreMock).toHaveBeenCalledWith('t1', '2026-02-24');
+        });
+
+        it('rejects invalid taskId', async () => {
+            const result = await mutatePlanningState('retainTaskForNextDay', { taskId: '' });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(retainTaskForDateInStoreMock).not.toHaveBeenCalled();
+        });
+
+        it('returns TASK_NOT_FOUND when store reports missing task', async () => {
+            retainTaskForDateInStoreMock.mockResolvedValue({
+                ok: false,
+                code: 'TASK_NOT_FOUND',
+            });
+
+            const result = await mutatePlanningState('retainTaskForNextDay', { taskId: 'missing' });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(TASK_NOT_FOUND);
+        });
+    });
+
+    describe('setSyncMode action', () => {
+        it('returns success with enabled true when saving enabled', async () => {
+            saveSyncModeMock.mockReturnValue({ ok: true, enabled: true });
+
+            const result = await mutatePlanningState('setSyncMode', { enabled: true });
+
+            expect(result.ok).toBe(true);
+            expect(result.enabled).toBe(true);
+            expect(saveSyncModeMock).toHaveBeenCalledWith(true);
+        });
+
+        it('returns success with enabled false when saving disabled', async () => {
+            saveSyncModeMock.mockReturnValue({ ok: true, enabled: false });
+
+            const result = await mutatePlanningState('setSyncMode', { enabled: false });
+
+            expect(result.ok).toBe(true);
+            expect(result.enabled).toBe(false);
+            expect(saveSyncModeMock).toHaveBeenCalledWith(false);
+        });
+
+        it('returns INVARIANT_VIOLATION when save fails', async () => {
+            saveSyncModeMock.mockReturnValue({ ok: false });
+
+            const result = await mutatePlanningState('setSyncMode', { enabled: true });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(result.message).toContain('sync mode');
+        });
+    });
+
+    describe('applyMergeBatch action', () => {
+        const baseTask = {
+            id: 'task-1',
+            todayIncluded: false,
+            scheduledFor: null,
+            retainedFor: null,
+        };
+
+        it('resolves a non-conflicting batch and returns resolved tasks', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [baseTask],
+                incomingMutations: [{ id: 'task-2', timestamp: 1000, device_id: 'device-A', title: 'New' }],
+            });
+            expect(result.ok).toBe(true);
+            expect(result.resolvedTasks).toHaveLength(2);
+            expect(result.conflicts).toBe(0);
+        });
+
+        it('resolves a conflicting batch and increments conflict counter', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [baseTask],
+                incomingMutations: [
+                    { id: 'task-1', timestamp: 100, device_id: 'device-A', title: 'A' },
+                    { id: 'task-1', timestamp: 200, device_id: 'device-B', title: 'B' },
+                ],
+            });
+            expect(result.ok).toBe(true);
+            expect(result.conflicts).toBe(1);
+        });
+
+        it('rejects merge that would exceed Today cap (todayCap=3 from mock)', async () => {
+            const todayTasks = Array.from({ length: 3 }, (_, i) => ({
+                id: `task-${i}`,
+                todayIncluded: true,
+                scheduledFor: null,
+                retainedFor: null,
+            }));
+            const mutation = {
+                id: 'task-new',
+                timestamp: 5000,
+                device_id: 'device-B',
+                todayIncluded: true,
+            };
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: todayTasks,
+                incomingMutations: [mutation],
+            });
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe('SYNC_MERGE_INVARIANT_REJECT');
+        });
+
+        it('applies todayIncluded from winner when cap allows it (todayCap=3)', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [{ ...baseTask, todayIncluded: false }],
+                incomingMutations: [{ id: 'task-1', timestamp: 9999, device_id: 'device-B', todayIncluded: true }],
+            });
+            expect(result.ok).toBe(true);
+            const t = result.resolvedTasks.find((r) => r.id === 'task-1');
+            expect(t.todayIncluded).toBe(true);
+        });
+
+        it('rejects malformed temporal target in incoming mutations', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [baseTask],
+                incomingMutations: [
+                    { id: 'task-1', timestamp: 1000, device_id: 'device-A', scheduledFor: '2026-99-99' },
+                ],
+            });
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe('SYNC_MERGE_INVARIANT_REJECT');
+        });
+
+        it('rejects ownership mismatch between local and incoming payload', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [{ ...baseTask, userId: 'user-1' }],
+                incomingMutations: [{ id: 'task-1', timestamp: 1000, device_id: 'device-A', userId: 'user-2' }],
+            });
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe('SYNC_MERGE_INVARIANT_REJECT');
         });
     });
 
