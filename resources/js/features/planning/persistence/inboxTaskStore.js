@@ -537,3 +537,53 @@ export async function listInboxTasks() {
         });
     });
 }
+
+/**
+ * Fetch all inbox tasks (unsorted) for reconciliation. Use listInboxTasks for UI ordering.
+ * @returns {Promise<object[]>}
+ */
+export async function getAllInboxTasks() {
+    return runTransaction('readonly', (store) => {
+        return new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result ?? []);
+            request.onerror = () => reject(new Error('Unable to load tasks.'));
+        });
+    });
+}
+
+/**
+ * Atomically replace all tasks in the store. Used for reconciliation after invariant-safe merge.
+ * All-or-nothing: entire transaction commits or rolls back.
+ *
+ * @param {object[]} tasks - Full task list to persist
+ * @returns {Promise<{ok: boolean, count?: number, code?: string}>}
+ */
+export async function replaceAllTasks(tasks) {
+    const list = Array.isArray(tasks) ? tasks : [];
+    const validTasks = list.filter((t) => t?.id != null);
+    return runTransaction('readwrite', (store) => {
+        return new Promise((resolve, reject) => {
+            const clearRequest = store.clear();
+            clearRequest.onsuccess = () => {
+                if (validTasks.length === 0) {
+                    resolve({ ok: true, count: 0 });
+                    return;
+                }
+                let written = 0;
+                const onPutDone = () => {
+                    written += 1;
+                    if (written === validTasks.length) {
+                        resolve({ ok: true, count: validTasks.length });
+                    }
+                };
+                for (const task of validTasks) {
+                    const req = store.put(task);
+                    req.onsuccess = onPutDone;
+                    req.onerror = () => reject(new Error('Unable to persist reconciled tasks.'));
+                }
+            };
+            clearRequest.onerror = () => reject(new Error('Unable to clear store for reconciliation.'));
+        });
+    });
+}

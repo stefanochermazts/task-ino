@@ -32,6 +32,12 @@ vi.mock('../persistence/dayCycleStore', () => ({
     saveLastPlanningDate: (date) => saveLastPlanningDateMock(date),
 }));
 
+const saveSyncModeMock = vi.fn();
+vi.mock('../persistence/syncModeStore', () => ({
+    readSyncMode: () => 'disabled',
+    saveSyncMode: (enabled) => saveSyncModeMock(enabled),
+}));
+
 vi.mock('../persistence/inboxTaskStore', () => ({
     addTaskToTodayWithCap: (taskId, cap) => addTaskToTodayWithCapMock(taskId, cap),
     swapTasksInToday: (addTaskId, removeTaskId) =>
@@ -719,6 +725,120 @@ describe('mutationGuardrail', () => {
 
             expect(result.ok).toBe(false);
             expect(result.code).toBe(TASK_NOT_FOUND);
+        });
+    });
+
+    describe('setSyncMode action', () => {
+        it('returns success with enabled true when saving enabled', async () => {
+            saveSyncModeMock.mockReturnValue({ ok: true, enabled: true });
+
+            const result = await mutatePlanningState('setSyncMode', { enabled: true });
+
+            expect(result.ok).toBe(true);
+            expect(result.enabled).toBe(true);
+            expect(saveSyncModeMock).toHaveBeenCalledWith(true);
+        });
+
+        it('returns success with enabled false when saving disabled', async () => {
+            saveSyncModeMock.mockReturnValue({ ok: true, enabled: false });
+
+            const result = await mutatePlanningState('setSyncMode', { enabled: false });
+
+            expect(result.ok).toBe(true);
+            expect(result.enabled).toBe(false);
+            expect(saveSyncModeMock).toHaveBeenCalledWith(false);
+        });
+
+        it('returns INVARIANT_VIOLATION when save fails', async () => {
+            saveSyncModeMock.mockReturnValue({ ok: false });
+
+            const result = await mutatePlanningState('setSyncMode', { enabled: true });
+
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe(INVARIANT_VIOLATION);
+            expect(result.message).toContain('sync mode');
+        });
+    });
+
+    describe('applyMergeBatch action', () => {
+        const baseTask = {
+            id: 'task-1',
+            todayIncluded: false,
+            scheduledFor: null,
+            retainedFor: null,
+        };
+
+        it('resolves a non-conflicting batch and returns resolved tasks', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [baseTask],
+                incomingMutations: [{ id: 'task-2', timestamp: 1000, device_id: 'device-A', title: 'New' }],
+            });
+            expect(result.ok).toBe(true);
+            expect(result.resolvedTasks).toHaveLength(2);
+            expect(result.conflicts).toBe(0);
+        });
+
+        it('resolves a conflicting batch and increments conflict counter', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [baseTask],
+                incomingMutations: [
+                    { id: 'task-1', timestamp: 100, device_id: 'device-A', title: 'A' },
+                    { id: 'task-1', timestamp: 200, device_id: 'device-B', title: 'B' },
+                ],
+            });
+            expect(result.ok).toBe(true);
+            expect(result.conflicts).toBe(1);
+        });
+
+        it('rejects merge that would exceed Today cap (todayCap=3 from mock)', async () => {
+            const todayTasks = Array.from({ length: 3 }, (_, i) => ({
+                id: `task-${i}`,
+                todayIncluded: true,
+                scheduledFor: null,
+                retainedFor: null,
+            }));
+            const mutation = {
+                id: 'task-new',
+                timestamp: 5000,
+                device_id: 'device-B',
+                todayIncluded: true,
+            };
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: todayTasks,
+                incomingMutations: [mutation],
+            });
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe('SYNC_MERGE_INVARIANT_REJECT');
+        });
+
+        it('applies todayIncluded from winner when cap allows it (todayCap=3)', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [{ ...baseTask, todayIncluded: false }],
+                incomingMutations: [{ id: 'task-1', timestamp: 9999, device_id: 'device-B', todayIncluded: true }],
+            });
+            expect(result.ok).toBe(true);
+            const t = result.resolvedTasks.find((r) => r.id === 'task-1');
+            expect(t.todayIncluded).toBe(true);
+        });
+
+        it('rejects malformed temporal target in incoming mutations', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [baseTask],
+                incomingMutations: [
+                    { id: 'task-1', timestamp: 1000, device_id: 'device-A', scheduledFor: '2026-99-99' },
+                ],
+            });
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe('SYNC_MERGE_INVARIANT_REJECT');
+        });
+
+        it('rejects ownership mismatch between local and incoming payload', async () => {
+            const result = await mutatePlanningState('applyMergeBatch', {
+                localTasks: [{ ...baseTask, userId: 'user-1' }],
+                incomingMutations: [{ id: 'task-1', timestamp: 1000, device_id: 'device-A', userId: 'user-2' }],
+            });
+            expect(result.ok).toBe(false);
+            expect(result.code).toBe('SYNC_MERGE_INVARIANT_REJECT');
         });
     });
 

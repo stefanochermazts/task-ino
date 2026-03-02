@@ -27,7 +27,64 @@
                     <p id="network-status" class="mt-1 text-sm text-slate-700">
                         Checking connectivity...
                     </p>
-                    <p class="mt-1 text-xs text-slate-500">sync remains optional and non-blocking</p>
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            id="sync-mode-toggle"
+                            class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                            aria-pressed="false"
+                            aria-label="Toggle sync mode"
+                        >
+                            Sync: <span id="sync-mode-label">Off</span>
+                        </button>
+                        <button
+                            type="button"
+                            id="reconcile-btn"
+                            class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            aria-label="Check for updates across devices"
+                        >
+                            Check for updates
+                        </button>
+                        <p id="sync-status" class="text-sm text-slate-700" aria-live="polite">Sync status: offline</p>
+                    </div>
+                    <p id="sync-status-feedback" class="mt-1 hidden text-sm text-amber-600" aria-live="polite"></p>
+                    <p class="mt-1 text-xs text-slate-500">Sync remains optional and non-blocking</p>
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            id="export-planning-btn"
+                            class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                            aria-label="Export planning data as JSON"
+                        >
+                            Export data
+                        </button>
+                        <button
+                            type="button"
+                            id="reset-sync-btn"
+                            class="rounded border border-amber-300 bg-white px-3 py-1 text-sm text-amber-800 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                            aria-label="Reset sync and keep local data"
+                        >
+                            Reset sync
+                        </button>
+                        <button
+                            type="button"
+                            id="delete-local-btn"
+                            class="rounded border border-red-300 bg-white px-3 py-1 text-sm text-red-800 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                            aria-label="Delete all local planning data (irreversible)"
+                        >
+                            Delete local data
+                        </button>
+                        <button
+                            type="button"
+                            id="delete-synced-btn"
+                            class="rounded border border-red-300 bg-white px-3 py-1 text-sm text-red-800 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                            aria-label="Delete synced data on remote (irreversible)"
+                        >
+                            Delete synced data
+                        </button>
+                        <p id="export-feedback" class="text-sm text-slate-600" aria-live="polite"></p>
+                        <p id="control-feedback" class="text-sm text-slate-600" aria-live="polite"></p>
+                    </div>
                 </div>
 
                 <section aria-labelledby="quick-capture-title" class="mb-6">

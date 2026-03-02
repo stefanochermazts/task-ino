@@ -60,19 +60,16 @@ development_status:
   2-6-daily-cycle-continuity-enforcement: done
   epic-2-retrospective: done
 
-  epic-3: backlog
-  3-1-runtime-isolation-from-sync-state: backlog
-  3-2-optional-sync-toggle-and-mode-management: backlog
-  3-3-sync-batch-protocol-with-deterministic-conflict-resolution: backlog
-  3-4-sync-state-visibility-without-planning-disruption: backlog
-  3-5-sync-error-transparency: backlog
-  3-6-multi-device-continuity-guardrails: backlog
-  3-7-e2ee-key-lifecycle-client-controlled: backlog
-  3-8-complete-human-readable-export-offline-capable: backlog
-  3-9-sync-reset-without-local-planning-loss: backlog
-  3-10-permanent-local-data-deletion: backlog
-  3-11-permanent-synced-data-deletion: backlog
-  epic-3-retrospective: optional
+  epic-3: done
+  s-001-sync-runtime-isolation-and-mode-toggle: done
+  s-002-sync-state-visibility-and-error-transparency: done
+  s-003-deterministic-sync-batch-conflict-resolution: done
+  s-004-multi-device-continuity-guardrails: done
+  s-005-e2ee-key-lifecycle-client-controlled: done
+  s-006-offline-capable-human-readable-export: done
+  s-007-sync-reset-without-local-planning-loss: done
+  s-008-irreversible-local-and-synced-data-deletion: done
+  epic-3-retrospective: done
 
   epic-4: backlog
   4-1-persistent-append-only-event-log: backlog

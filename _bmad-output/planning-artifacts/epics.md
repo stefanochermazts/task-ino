@@ -447,164 +447,71 @@ So that Today never drifts through implicit carry-over behavior.
 
 Provide trust architecture capabilities: local source-of-truth runtime isolation, optional sync with deterministic conflict handling, transparent sync feedback, client-side encryption control, export, deletion, and reset controls.
 
-### Story 3.1: Runtime Isolation From Sync State
+*Implementation stories: S-001..S-008 (aggregated from original 3.1..3.11). Full specs in `_bmad-output/implementation-artifacts/`.*
 
-As a planner,
-I want planning runtime behavior to remain isolated from sync state,
-So that daily planning remains fully functional under network failures.
-**Implements:** FR21, FR27
+### S-001: Sync Runtime Isolation and Mode Toggle
 
-**Acceptance Criteria:**
+*Maps: 3.1 + 3.2 | Implements: FR21, FR22, FR27*
 
-**Given** forced network failure simulation is active
-**When** user performs core planning actions (capture, move, reschedule, closure decisions)
-**Then** planning remains fully functional locally
-**And** sync state changes do not block or mutate core planning runtime behavior
+As a planner, I want planning runtime behavior to remain isolated from sync state and to toggle sync explicitly, so that planning stays reliable under network issues and sync remains fully optional.
 
-### Story 3.2: Optional Sync Toggle and Mode Management
+**Acceptance Criteria:** Given forced network failure simulation, planning (capture, move, reschedule, closure) remains fully functional locally; sync state does not block or mutate core planning. Given local planning active, user can toggle sync on/off deterministically; disabling sync never disables core planning capabilities.
 
-As a planner,
-I want to explicitly enable or disable synchronization,
-So that sync remains optional and under my control.
-**Implements:** FR22
+### S-002: Sync State Visibility and Error Transparency
 
-**Acceptance Criteria:**
+*Maps: 3.4 + 3.5 | Implements: FR26, FR56*
 
-**Given** local planning runtime is active
-**When** user toggles sync mode on or off
-**Then** sync mode changes are applied deterministically
-**And** disabling sync never disables core planning capabilities
+As a planner, I want sync state and sync errors visible in actionable language without disrupting planning, so that trust is preserved while planning flow stays uninterrupted.
 
-### Story 3.3: Sync Batch Protocol with Deterministic Conflict Resolution
+**Acceptance Criteria:** Sync status (syncing, offline, retrying, success) is informational and non-blocking; planning flow remains uninterrupted. Sync errors do not block planning, provide actionable recovery path, and never expose raw technical exceptions.
 
-As a planner,
-I want sync batch merges to resolve consistently,
-So that cross-device updates do not create unpredictable plan states.
-**Implements:** FR55, FR56
+### S-003: Deterministic Sync Batch Conflict Resolution
 
-**Acceptance Criteria:**
+*Maps: 3.3 | Implements: FR55, FR56*
 
-**Given** conflicting updates arrive through sync batch processing
-**When** merge resolution executes
-**Then** conflict resolution MUST be deterministic
-**And** tie-break strategy MUST be documented (`timestamp + device_id`)
-**And** resolution MUST NOT alter Today cap invariant
-**And** merge MUST NOT introduce implicit carry-over behavior
+As a planner, I want sync batch merges to resolve conflicts deterministically, so that multi-device updates never produce unpredictable planning state.
 
-### Story 3.4: Sync State Visibility Without Planning Disruption
+**Acceptance Criteria:** Conflict resolution is deterministic; tie-break documented as `timestamp + device_id`; resolution does not alter Today cap invariant; merge does not introduce implicit carry-over behavior.
 
-As a planner,
-I want clear sync status feedback that never disrupts planning,
-So that technical state remains secondary to decisions.
-**Implements:** FR26
+### S-004: Multi-Device Continuity Guardrails
 
-**Acceptance Criteria:**
+*Maps: 3.6 | Implements: FR58, FR59*
 
-**Given** sync status changes (syncing, offline, retrying, success)
-**When** status is rendered in UI
-**Then** feedback remains informational and non-blocking
-**And** planning interaction flow remains uninterrupted
+As a planner using multiple devices, I want continuity preserved under eventual consistency, so that planning state remains aligned and understandable across devices.
 
-### Story 3.5: Sync Error Transparency
+**Acceptance Criteria:** When user switches devices under eventual consistency, synced state reconciliation preserves planning continuity without violating core invariants; user-visible state alignment remains consistent with confirmed planning decisions.
 
-As a planner,
-I want sync errors explained in actionable language,
-So that trust is preserved without technical blame.
-**Implements:** FR26, FR56
+### S-005: E2EE Key Lifecycle (Client-Controlled)
 
-**Acceptance Criteria:**
+*Maps: 3.7 | Implements: FR23*
 
-**Given** a sync failure occurs
-**When** error feedback is presented
-**Then** sync errors MUST NOT block planning actions
-**And** sync errors MUST provide an actionable recovery path
-**And** raw technical exceptions MUST NOT be exposed to end users
+As a privacy-aware planner, I want encryption keys generated and controlled client-side, so that synchronized task content remains unreadable to server operators.
 
-### Story 3.6: Multi-Device Continuity Guardrails
+**Acceptance Criteria:** Keys are generated and controlled client-side; server has no capability to decrypt synchronized task content.
 
-As a planner using multiple devices,
-I want continuity preserved under eventual consistency,
-So that planning state remains aligned and understandable across devices.
-**Implements:** FR58, FR59
+### S-006: Offline-Capable Human-Readable Export
 
-**Acceptance Criteria:**
+*Maps: 3.8 | Implements: FR24, FR25*
 
-**Given** user switches devices under eventual consistency conditions
-**When** synced state is reconciled
-**Then** planning continuity is preserved without violating core invariants
-**And** user-visible state alignment remains consistent with confirmed planning decisions
+As a planner, I want complete export available even offline in human-readable format, so that portability and trust controls remain always available.
 
-### Story 3.7: E2EE Key Lifecycle (Client-Controlled)
+**Acceptance Criteria:** Export includes full task state, areas, Today inclusion signals, cap configuration, and reconstruction metadata; format is human-readable (JSON); export is possible offline.
 
-As a privacy-aware planner,
-I want encryption keys generated and controlled client-side,
-So that synchronized task content remains unreadable to server operators.
-**Implements:** FR23
+### S-007: Sync Reset Without Local Planning Loss
 
-**Acceptance Criteria:**
+*Maps: 3.9 | Implements: FR30*
 
-**Given** sync with E2EE is enabled
-**When** key lifecycle operations occur
-**Then** keys are generated and controlled client-side
-**And** server has no capability to decrypt synchronized task content
+As a planner, I want to reset synchronization without losing local planning continuity, so that I can restore trust and safely re-enable sync.
 
-### Story 3.8: Complete Human-Readable Export (Offline-Capable)
+**Acceptance Criteria:** Reset revokes remote device registration; reset does not delete local planning state; reset allows re-enabling sync with fresh key material.
 
-As a planner,
-I want full export available even offline,
-So that data portability and trust controls are always available.
-**Implements:** FR24, FR25
+### S-008: Irreversible Local and Synced Data Deletion
 
-**Acceptance Criteria:**
+*Maps: 3.10 + 3.11 | Implements: FR28, FR29*
 
-**Given** planning data exists locally
-**When** user triggers export
-**Then** export MUST include full task state, areas, Today inclusion signals, cap configuration, and reconstruction metadata
-**And** export format MUST be human-readable (`JSON`)
-**And** export MUST be possible offline
+As a planner, I want permanent deletion controls for both local and synced data, so that data ownership includes intentional irreversible deletion.
 
-### Story 3.9: Sync Reset Without Local Planning Loss
-
-As a planner,
-I want to reset synchronization without losing local planning continuity,
-So that I can restore trust and re-enable sync safely.
-**Implements:** FR30
-
-**Acceptance Criteria:**
-
-**Given** sync state has degraded or needs reset
-**When** user confirms sync reset
-**Then** reset MUST revoke remote device registration
-**And** reset MUST NOT delete local planning state
-**And** reset MUST allow re-enabling sync with fresh key material
-
-### Story 3.10: Permanent Local Data Deletion
-
-As a planner,
-I want to permanently delete local planning data,
-So that local data ownership includes irreversible deletion control.
-**Implements:** FR28
-
-**Acceptance Criteria:**
-
-**Given** user explicitly confirms local deletion intent
-**When** local deletion executes
-**Then** local planning data is irreversibly deleted
-**And** operation outcome is clearly confirmed to user
-
-### Story 3.11: Permanent Synced Data Deletion
-
-As a planner with sync enabled,
-I want to permanently delete synchronized planning data,
-So that remote persistence can be revoked intentionally.
-**Implements:** FR29
-
-**Acceptance Criteria:**
-
-**Given** user explicitly confirms synced deletion intent
-**When** synchronized deletion executes
-**Then** synced planning data is irreversibly deleted
-**And** local runtime continuity rules are preserved according to reset/deletion intent
+**Acceptance Criteria:** Local deletion: user confirms, local planning data irreversibly deleted, outcome clearly confirmed. Synced deletion: user confirms, synced data irreversibly deleted; local runtime continuity preserved according to reset/deletion intent.
 
 ## Epic 4: Recovery and Supportability Without Destructive Reset
 

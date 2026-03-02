@@ -12,7 +12,9 @@ import {
 } from '../persistence/inboxTaskStore';
 import { readTodayCap } from '../persistence/todayCapStore';
 import { readLastPlanningDate, saveLastPlanningDate } from '../persistence/dayCycleStore';
+import { saveSyncMode } from '../persistence/syncModeStore';
 import { isValidArea } from '../persistence/areaStore';
+import { resolveSyncBatch, MERGE_INVARIANT_REJECT_CODE } from '../sync/syncBatchMerge';
 
 /** Stable domain error codes for blocked transitions */
 export const TODAY_CAP_EXCEEDED = 'TODAY_CAP_EXCEEDED';
@@ -90,6 +92,15 @@ function normalizeResult(result) {
         if (result.markerSaved !== undefined) {
             out.markerSaved = result.markerSaved;
         }
+        if (result.enabled !== undefined) {
+            out.enabled = result.enabled;
+        }
+        if (result.resolvedTasks !== undefined) {
+            out.resolvedTasks = result.resolvedTasks;
+        }
+        if (result.conflicts !== undefined) {
+            out.conflicts = result.conflicts;
+        }
         return out;
     }
     const code = result?.code ?? INVARIANT_VIOLATION;
@@ -113,7 +124,7 @@ function normalizeResult(result) {
  * Single write-path guardrail for planning mutations.
  * All planning write operations MUST pass through this layer.
  *
- * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea' | 'rescheduleTask' | 'bulkRescheduleTasks' | 'retainTaskForNextDay' | 'enforceDailyContinuity'
+ * @param {string} action - 'addToToday' | 'swapToToday' | 'bulkAddToToday' | 'removeFromToday' | 'pauseTask' | 'setTaskArea' | 'rescheduleTask' | 'bulkRescheduleTasks' | 'retainTaskForNextDay' | 'setSyncMode' | 'applyMergeBatch' | 'enforceDailyContinuity'
  * @param {object} params - Action-specific parameters
  * @returns {Promise<{ok: boolean, code?: string, message?: string, task?: object}>}
  */
@@ -270,6 +281,38 @@ export async function mutatePlanningState(action, params) {
             const tomorrow = getTomorrowYYYYMMDD();
             const result = await retainTaskForDateInStore(taskId, tomorrow);
             return normalizeResult(result);
+        }
+
+        if (action === 'setSyncMode') {
+            const enabled = params?.enabled === true;
+            const result = saveSyncMode(enabled);
+            if (!result.ok) {
+                return {
+                    ok: false,
+                    code: INVARIANT_VIOLATION,
+                    message: 'Unable to save sync mode. Please retry.',
+                };
+            }
+            return normalizeResult({ ok: true, enabled });
+        }
+
+        if (action === 'applyMergeBatch') {
+            const { localTasks, incomingMutations } = params ?? {};
+            const todayCap = readTodayCap();
+            const mergeResult = resolveSyncBatch({ localTasks, incomingMutations, todayCap });
+            if (!mergeResult.ok) {
+                return {
+                    ok: false,
+                    code: mergeResult.code ?? MERGE_INVARIANT_REJECT_CODE,
+                    message: mergeResult.message ?? 'Sync merge rejected due to invariant violation.',
+                };
+            }
+            return {
+                ok: true,
+                resolvedTasks: mergeResult.resolvedTasks,
+                conflicts: mergeResult.conflicts,
+                code: mergeResult.code,
+            };
         }
 
         if (action === 'enforceDailyContinuity') {

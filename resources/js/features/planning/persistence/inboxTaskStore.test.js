@@ -10,6 +10,9 @@ import {
     saveInboxTask,
     setTaskArea,
     setTaskPaused,
+    getAllInboxTasks,
+    replaceAllTasks,
+    listInboxTasks,
 } from './inboxTaskStore';
 
 function createFakeIndexedDb(options = {}) {
@@ -46,6 +49,12 @@ function createFakeIndexedDb(options = {}) {
         getAll() {
             return makeRequest((request) => {
                 request.result = [...records.values()].map((item) => ({ ...item }));
+                request.onsuccess?.();
+            });
+        },
+        clear() {
+            return makeRequest((request) => {
+                records.clear();
                 request.onsuccess?.();
             });
         },
@@ -603,6 +612,49 @@ describe('inboxTaskStore closure mutations', () => {
         it('returns TASK_NOT_FOUND when task is missing', async () => {
             const result = await retainTaskForDate('missing-id', '2026-02-24');
             expect(result).toEqual({ ok: false, code: 'TASK_NOT_FOUND' });
+        });
+    });
+
+    describe('getAllInboxTasks and replaceAllTasks (reconciliation)', () => {
+        it('getAllInboxTasks returns all tasks unsorted', async () => {
+            await saveInboxTask({ id: 't-a', title: 'A', createdAt: '2026-02-23T10:00:00.000Z' });
+            await saveInboxTask({ id: 't-b', title: 'B', createdAt: '2026-02-23T09:00:00.000Z' });
+            const all = await getAllInboxTasks();
+            expect(all).toHaveLength(2);
+            expect(all.map((t) => t.id).sort()).toEqual(['t-a', 't-b']);
+        });
+
+        it('replaceAllTasks atomically replaces store content', async () => {
+            await saveInboxTask({ id: 'old-1', title: 'Old', createdAt: '2026-02-22T10:00:00.000Z' });
+            const result = await replaceAllTasks([
+                { id: 'new-1', title: 'New 1', createdAt: '2026-02-23T10:00:00.000Z' },
+                { id: 'new-2', title: 'New 2', createdAt: '2026-02-23T11:00:00.000Z' },
+            ]);
+            expect(result.ok).toBe(true);
+            expect(result.count).toBe(2);
+            const all = await getAllInboxTasks();
+            expect(all).toHaveLength(2);
+            expect(all.find((t) => t.id === 'old-1')).toBeUndefined();
+            expect(all.find((t) => t.id === 'new-1')).toBeDefined();
+            expect(all.find((t) => t.id === 'new-2')).toBeDefined();
+        });
+
+        it('replaceAllTasks with empty list clears store', async () => {
+            await saveInboxTask({ id: 'to-clear', title: 'Clear me', createdAt: '2026-02-23T10:00:00.000Z' });
+            const result = await replaceAllTasks([]);
+            expect(result.ok).toBe(true);
+            expect(result.count).toBe(0);
+            const all = await getAllInboxTasks();
+            expect(all).toHaveLength(0);
+        });
+
+        it('replaceAllTasks skips tasks without id', async () => {
+            const result = await replaceAllTasks([
+                { id: 'valid', title: 'Valid', createdAt: '2026-02-23T10:00:00.000Z' },
+                { title: 'No id', createdAt: '2026-02-23T11:00:00.000Z' },
+            ]);
+            expect(result.ok).toBe(true);
+            expect(result.count).toBe(1);
         });
     });
 });
