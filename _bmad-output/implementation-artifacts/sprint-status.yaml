@@ -71,15 +71,15 @@ development_status:
   s-008-irreversible-local-and-synced-data-deletion: done
   epic-3-retrospective: done
 
-  epic-4: backlog
-  4-1-persistent-append-only-event-log: backlog
-  4-2-integrity-validation-toolkit: backlog
-  4-3-safe-projection-rebuild-after-migration-or-corruption: backlog
-  4-4-readable-timeline-phase-scoped: backlog
-  4-5-guided-non-destructive-recovery: backlog
-  4-6-destructive-path-confirmation-restricted: backlog
-  4-7-no-destructive-reset-default: backlog
-  epic-4-retrospective: optional
+  epic-4: in-progress
+  4-1-persistent-append-only-event-log: done
+  4-2-integrity-validation-toolkit: done
+  4-3-safe-projection-rebuild-after-migration-or-corruption: done
+  4-4-readable-timeline-phase-scoped: done
+  4-5-guided-non-destructive-recovery: done
+  4-6-destructive-path-confirmation-restricted: done
+  4-7-no-destructive-reset-default: done
+  epic-4-retrospective: done
 
   epic-5: backlog
   5-1-public-pages-baseline: backlog

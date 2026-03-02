@@ -3,37 +3,26 @@
  * Schema is deterministic for reconstruction. Uses local stores only; no network.
  */
 
+import { validateTaskFields } from '../invariants/validateTaskFields';
+
 const EXPORT_VERSION = 1;
 
 /**
  * Reject partial/corrupt export input before serialization.
  * Export must not report success with malformed task records.
+ * Uses shared validateTaskFields from invariants layer.
  *
  * @param {object[]} tasks
  * @returns {{ok: boolean, code?: string, message?: string}}
  */
 export function validateExportTasks(tasks) {
-    if (!Array.isArray(tasks)) {
-        return {
-            ok: false,
-            code: 'EXPORT_INVALID_TASKS',
-            message: 'Unable to generate export file. Local task data is invalid.',
-        };
-    }
-
-    for (const task of tasks) {
-        const id = String(task?.id ?? '').trim();
-        const title = String(task?.title ?? '').trim();
-        if (id === '' || title === '') {
-            return {
-                ok: false,
-                code: 'EXPORT_INVALID_TASKS',
-                message: 'Unable to generate export file. Local task data is invalid.',
-            };
-        }
-    }
-
-    return { ok: true };
+    const result = validateTaskFields(tasks);
+    if (result.ok) return { ok: true };
+    return {
+        ok: false,
+        code: 'EXPORT_INVALID_TASKS',
+        message: 'Unable to generate export file. Local task data is invalid.',
+    };
 }
 
 /**

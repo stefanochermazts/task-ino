@@ -1,3 +1,4 @@
+import { appendPlanningEvent } from './appendPlanningEvent';
 import { mutatePlanningState } from '../invariants/mutationGuardrail';
 
 /**
@@ -8,5 +9,18 @@ import { mutatePlanningState } from '../invariants/mutationGuardrail';
  * @returns {Promise<{ok: boolean, code?: string, message?: string, task?: object}>}
  */
 export async function removeFromToday(taskId) {
-    return mutatePlanningState('removeFromToday', { taskId });
+    const result = await mutatePlanningState('removeFromToday', { taskId });
+    if (result?.ok) {
+        appendPlanningEvent(
+            {
+                timestamp: new Date().toISOString(),
+                event_type: 'planning.task.removed_from_today',
+                entity_id: taskId,
+                payload_version: 1,
+                payload: {},
+            },
+            {},
+        ).catch(console.error);
+    }
+    return result;
 }

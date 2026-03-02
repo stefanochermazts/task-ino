@@ -1,3 +1,6 @@
+import { DESTRUCTIVE_OPERATIONS } from '../commands/destructiveOperations.js';
+import { validateDestructiveConfirmation } from '../invariants/validateDestructiveConfirmation.js';
+
 const KEY_DB_NAME = 'taskino-e2ee';
 const KEY_DB_VERSION = 1;
 const KEY_OBJECT_STORE = 'cryptokeys';
@@ -170,8 +173,10 @@ export async function isE2EEActive(options = {}) {
  * Ensure the active E2EE key is ready, generating one if absent.
  * Keys are stored as non-exportable CryptoKey objects in IndexedDB;
  * only non-sensitive metadata (keyId, algorithm, version) is held in localStorage.
+ * Key rotation requires explicit user confirmation (destructive: loses ability to decrypt prior data).
  * @param {object} [options]
- * @param {boolean} [options.rotate] - if true, rotate the active key
+ * @param {boolean} [options.rotate] - if true, rotate the active key (destructive; requires confirmed: true)
+ * @param {boolean} [options.confirmed] - required true when rotate is true
  * @returns {Promise<{ok: boolean, keyId?: string, rotated?: boolean, code?: string, message?: string}>}
  */
 export async function ensureE2EEKeyReady(options = {}) {
@@ -188,6 +193,13 @@ export async function ensureE2EEKeyReady(options = {}) {
     }
 
     const meta = readKeyMeta(storage);
+    if (meta && options.rotate === true) {
+        const confirmCheck = validateDestructiveConfirmation({
+            confirmed: options.confirmed,
+            operationId: DESTRUCTIVE_OPERATIONS.KEY_ROTATION,
+        });
+        if (!confirmCheck.ok) return confirmCheck;
+    }
     if (meta && options.rotate !== true) {
         const record = await getKeyRecord(meta.keyId, idb).catch(() => null);
         if (record?.key) {

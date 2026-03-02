@@ -1,10 +1,24 @@
+import { appendPlanningEvent } from './appendPlanningEvent';
 import { mutatePlanningState } from '../invariants/mutationGuardrail';
 
 /**
  * Add a single task to Today. Routes through centralized mutation guardrail.
  */
 export async function addToToday(taskId) {
-    return mutatePlanningState('addToToday', { taskId });
+    const result = await mutatePlanningState('addToToday', { taskId });
+    if (result?.ok) {
+        appendPlanningEvent(
+            {
+                timestamp: new Date().toISOString(),
+                event_type: 'planning.task.added_to_today',
+                entity_id: taskId,
+                payload_version: 1,
+                payload: {},
+            },
+            {},
+        ).catch(console.error);
+    }
+    return result;
 }
 
 /**

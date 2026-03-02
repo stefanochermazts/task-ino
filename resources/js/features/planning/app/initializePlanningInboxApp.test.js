@@ -87,6 +87,24 @@ vi.mock('../commands/deleteSyncedPlanningData', () => ({
     deleteSyncedPlanningData: (...args) => deleteSyncedPlanningDataMock(...args),
 }));
 
+const loadTimelineMock = vi.fn();
+vi.mock('../commands/loadTimeline', () => ({
+    loadTimeline: (...args) => loadTimelineMock(...args),
+}));
+
+const runGuidedRecoveryMock = vi.fn();
+const executeRecoveryActionMock = vi.fn();
+const rebuildPlanningProjectionMock = vi.fn();
+vi.mock('../commands/runGuidedRecovery', () => ({
+    runGuidedRecovery: (...args) => runGuidedRecoveryMock(...args),
+}));
+vi.mock('../commands/executeRecoveryAction', () => ({
+    executeRecoveryAction: (...args) => executeRecoveryActionMock(...args),
+}));
+vi.mock('../commands/rebuildPlanningProjection', () => ({
+    rebuildPlanningProjection: (...args) => rebuildPlanningProjectionMock(...args),
+}));
+
 vi.mock('../persistence/inboxTaskStore', () => ({
     listInboxTasks: (...args) => listInboxTasksMock(...args),
 }));
@@ -144,6 +162,31 @@ function buildAppHtml() {
             <button id="delete-synced-btn" type="button">Delete synced data</button>
             <p id="export-feedback"></p>
             <p id="control-feedback"></p>
+            <details id="event-timeline-panel">
+                <summary>Event Timeline</summary>
+                <div>
+                    <label for="timeline-filter">Filter by type:</label>
+                    <select id="timeline-filter">
+                        <option value="all">All</option>
+                    </select>
+                    <button id="timeline-refresh-btn" type="button">Refresh</button>
+                    <p id="timeline-feedback" aria-live="polite"></p>
+                    <ol id="timeline-list"></ol>
+                </div>
+            </details>
+            <button id="run-integrity-check-btn" type="button">Run integrity check</button>
+            <p id="recovery-feedback" aria-live="polite"></p>
+            <div id="recovery-violations"></div>
+            <div id="recovery-actions" class="hidden">
+                <div class="recovery-action-block">
+                    <button id="recovery-rebuild-btn" type="button" class="primary">Rebuild Today projection</button>
+                    <p class="recovery-action-description">Recomputes the Today view from local task state. Reversible — no data is deleted.</p>
+                </div>
+                <div class="recovery-action-block">
+                    <button id="recovery-delete-local-btn" type="button" class="destructive">Delete all local data (irreversible)</button>
+                    <p class="recovery-action-description">Permanently removes all local tasks, areas, and sync state.</p>
+                </div>
+            </div>
             <form id="quick-capture-form">
                 <input id="quick-capture-input" />
                 <button id="quick-capture-submit" type="submit">Add</button>
@@ -230,6 +273,22 @@ describe('initializePlanningInboxApp', () => {
         resetSyncStateMock.mockResolvedValue({ ok: true });
         deleteLocalPlanningDataMock.mockResolvedValue({ ok: true });
         deleteSyncedPlanningDataMock.mockResolvedValue({ ok: true });
+        loadTimelineMock.mockResolvedValue({
+            ok: true,
+            entries: [],
+            availableTypes: [],
+        });
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: false,
+            violations: [],
+            actions: [
+                { id: 'rebuild-projection', destructive: false },
+                { id: 'delete-local-data', destructive: true },
+            ],
+        });
+        executeRecoveryActionMock.mockResolvedValue({ ok: true });
+        rebuildPlanningProjectionMock.mockResolvedValue({ ok: true, projection: { items: [], cap: 3 } });
         window.confirm = vi.fn().mockReturnValue(false);
     });
 
@@ -543,7 +602,10 @@ describe('initializePlanningInboxApp', () => {
     it('delete local button calls delete, refreshes, and shows feedback', async () => {
         window.confirm = vi.fn().mockReturnValue(true);
         listInboxTasksMock.mockResolvedValue([{ id: 'after-delete', title: 'Rebuilt', todayIncluded: false }]);
-        deleteLocalPlanningDataMock.mockResolvedValue({ ok: true });
+        deleteLocalPlanningDataMock.mockImplementation(async (opts) => {
+            if (typeof opts?.onAfterDelete === 'function') await opts.onAfterDelete();
+            return { ok: true };
+        });
         const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
         initializePlanningInboxApp(document);
         await flushAsyncWork();
@@ -554,7 +616,13 @@ describe('initializePlanningInboxApp', () => {
         deleteLocalBtn.click();
         await flushAsyncWork();
 
-        expect(deleteLocalPlanningDataMock).toHaveBeenCalledWith({ confirmed: true });
+        expect(deleteLocalPlanningDataMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                confirmed: true,
+                onAfterDelete: expect.any(Function),
+            }),
+        );
+        expect(rebuildPlanningProjectionMock).toHaveBeenCalled();
         expect(controlFeedback.textContent).toContain('Local data deleted');
         expect(listInboxTasksMock.mock.calls.length).toBeGreaterThan(initialListCalls);
     });
@@ -591,6 +659,456 @@ describe('initializePlanningInboxApp', () => {
 
         expect(deleteSyncedPlanningDataMock).toHaveBeenCalledWith({ confirmed: true });
         expect(controlFeedback.textContent).toContain('could not be confirmed');
+    });
+
+    it('timeline refresh populates timeline list with entries', async () => {
+        loadTimelineMock.mockResolvedValue({
+            ok: true,
+            entries: [
+                {
+                    displayTimestamp: '2026-03-02T12:00:00.000Z',
+                    event_type: 'planning.task.added_to_today',
+                    entity_id: 't1',
+                },
+            ],
+            availableTypes: ['planning.task.added_to_today'],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const refreshBtn = document.querySelector('#timeline-refresh-btn');
+        const timelineList = document.querySelector('#timeline-list');
+        const timelineFilter = document.querySelector('#timeline-filter');
+
+        refreshBtn.click();
+        await flushAsyncWork();
+
+        expect(loadTimelineMock).toHaveBeenCalledWith('all');
+        expect(timelineList.children.length).toBe(1);
+        expect(timelineList.children[0].textContent).toContain('planning.task.added_to_today');
+        expect(timelineList.children[0].textContent).toContain('t1');
+        expect(timelineFilter.querySelectorAll('option').length).toBeGreaterThan(1);
+    });
+
+    it('opening timeline panel auto-loads entries', async () => {
+        loadTimelineMock.mockResolvedValue({ ok: true, entries: [], availableTypes: [] });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const panel = document.querySelector('#event-timeline-panel');
+        panel.open = true;
+        panel.dispatchEvent(new Event('toggle'));
+        await flushAsyncWork();
+
+        expect(loadTimelineMock).toHaveBeenCalledWith('all');
+    });
+
+    it('timeline filter change re-renders filtered list', async () => {
+        loadTimelineMock
+            .mockResolvedValueOnce({
+                ok: true,
+                entries: [
+                    { displayTimestamp: '2026-03-02T10:00:00.000Z', event_type: 'planning.task.created', entity_id: 't1' },
+                    { displayTimestamp: '2026-03-02T11:00:00.000Z', event_type: 'planning.task.added_to_today', entity_id: 't1' },
+                ],
+                availableTypes: ['planning.task.added_to_today', 'planning.task.created'],
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                entries: [{ displayTimestamp: '2026-03-02T10:00:00.000Z', event_type: 'planning.task.created', entity_id: 't1' }],
+                availableTypes: ['planning.task.added_to_today', 'planning.task.created'],
+            });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const refreshBtn = document.querySelector('#timeline-refresh-btn');
+        const timelineFilter = document.querySelector('#timeline-filter');
+        const timelineList = document.querySelector('#timeline-list');
+
+        refreshBtn.click();
+        await flushAsyncWork();
+
+        timelineFilter.value = 'planning.task.created';
+        timelineFilter.dispatchEvent(new Event('change'));
+        await flushAsyncWork();
+
+        expect(loadTimelineMock).toHaveBeenLastCalledWith('planning.task.created');
+        expect(timelineList.children.length).toBe(1);
+    });
+
+    it('timeline renders entries in newest-first order as provided by timeline projection', async () => {
+        loadTimelineMock.mockResolvedValue({
+            ok: true,
+            entries: [
+                { displayTimestamp: '2026-03-02T12:00:00.000Z', event_type: 'planning.task.added_to_today', entity_id: 't-new' },
+                { displayTimestamp: '2026-03-02T10:00:00.000Z', event_type: 'planning.task.created', entity_id: 't-old' },
+            ],
+            availableTypes: ['planning.task.added_to_today', 'planning.task.created'],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const refreshBtn = document.querySelector('#timeline-refresh-btn');
+        const timelineList = document.querySelector('#timeline-list');
+        refreshBtn.click();
+        await flushAsyncWork();
+
+        expect(timelineList.children.length).toBe(2);
+        expect(timelineList.children[0].textContent).toContain('t-new');
+        expect(timelineList.children[1].textContent).toContain('t-old');
+    });
+
+    it('timeline shows "No events recorded yet." when log is empty', async () => {
+        loadTimelineMock.mockResolvedValue({ ok: true, entries: [], availableTypes: [] });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const refreshBtn = document.querySelector('#timeline-refresh-btn');
+        const timelineFeedback = document.querySelector('#timeline-feedback');
+
+        refreshBtn.click();
+        await flushAsyncWork();
+
+        expect(timelineFeedback.textContent).toContain('No events recorded yet');
+    });
+
+    it('timeline load failure shows sanitized message in feedback', async () => {
+        loadTimelineMock.mockResolvedValue({
+            ok: false,
+            code: 'TIMELINE_LOAD_FAILED',
+            message: 'Unable to load event timeline. Please try again.',
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const refreshBtn = document.querySelector('#timeline-refresh-btn');
+        const timelineFeedback = document.querySelector('#timeline-feedback');
+
+        refreshBtn.click();
+        await flushAsyncWork();
+
+        expect(timelineFeedback.textContent).toContain('Unable to load');
+        expect(timelineFeedback.textContent).not.toContain('Event log read failed');
+    });
+
+    it('timeline uses fallback timestamp when displayTimestamp is invalid', async () => {
+        loadTimelineMock.mockResolvedValue({
+            ok: true,
+            entries: [{ displayTimestamp: 'not-a-date', event_type: 'planning.task.created', entity_id: 't1' }],
+            availableTypes: ['planning.task.created'],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const refreshBtn = document.querySelector('#timeline-refresh-btn');
+        const timelineList = document.querySelector('#timeline-list');
+        refreshBtn.click();
+        await flushAsyncWork();
+
+        expect(timelineList.children[0].textContent).toContain('—');
+        expect(timelineList.children[0].textContent).not.toContain('Invalid Date');
+    });
+
+    it('integrity check with no violations shows "No integrity issues detected."', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: false,
+            violations: [],
+            actions: [],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        const recoveryFeedback = document.querySelector('#recovery-feedback');
+
+        runBtn.click();
+        await flushAsyncWork();
+
+        expect(recoveryFeedback.textContent).toContain('No integrity issues detected');
+    });
+
+    it('integrity check with violations renders violation list and shows action buttons', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'TODAY_CAP_EXCEEDED', detail: 'Today contains 6 tasks but cap is 5.' }],
+            actions: [
+                {
+                    id: 'rebuild-projection',
+                    destructive: false,
+                    label: 'Rebuild Today projection',
+                    description: 'Recomputes the Today view from local task state. Reversible — no data is deleted.',
+                },
+                {
+                    id: 'delete-local-data',
+                    destructive: true,
+                    label: 'Delete all local planning data',
+                    description: 'Permanently removes all local tasks, areas, and sync state. Irreversible.',
+                },
+            ],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        const recoveryViolations = document.querySelector('#recovery-violations');
+        const recoveryActions = document.querySelector('#recovery-actions');
+
+        runBtn.click();
+        await flushAsyncWork();
+
+        expect(recoveryViolations.textContent).toContain('TODAY_CAP_EXCEEDED');
+        expect(recoveryActions.classList.contains('hidden')).toBe(false);
+    });
+
+    it('recovery action labels/descriptions are sourced from guide.actions', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [
+                {
+                    id: 'rebuild-projection',
+                    destructive: false,
+                    label: 'Rebuild safely',
+                    description: 'No data loss path.',
+                },
+                {
+                    id: 'delete-local-data',
+                    destructive: true,
+                    label: 'Delete everything now',
+                    description: 'Permanent and irreversible.',
+                },
+            ],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const rebuildBtn = document.querySelector('#recovery-rebuild-btn');
+        const deleteBtn = document.querySelector('#recovery-delete-local-btn');
+        const rebuildDesc = rebuildBtn.closest('div').querySelector('p');
+        const deleteDesc = deleteBtn.closest('div').querySelector('p');
+
+        expect(rebuildBtn.textContent).toContain('Rebuild safely');
+        expect(deleteBtn.textContent).toContain('Delete everything now');
+        expect(rebuildDesc.textContent).toContain('No data loss path');
+        expect(deleteDesc.textContent).toContain('Permanent and irreversible');
+    });
+
+    it('after run-integrity-check-btn click, recovery-rebuild-btn appears in DOM before recovery-delete-local-btn', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [{ id: 'rebuild-projection', destructive: false }, { id: 'delete-local-data', destructive: true }],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const rebuildBtn = document.querySelector('#recovery-rebuild-btn');
+        const deleteBtn = document.querySelector('#recovery-delete-local-btn');
+        expect(rebuildBtn).toBeTruthy();
+        expect(deleteBtn).toBeTruthy();
+        expect(rebuildBtn.compareDocumentPosition(deleteBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('recovery-rebuild-btn has primary visual treatment (no destructive class), recovery-delete-local-btn has destructive class', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [{ id: 'rebuild-projection', destructive: false }, { id: 'delete-local-data', destructive: true }],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const rebuildBtn = document.querySelector('#recovery-rebuild-btn');
+        const deleteBtn = document.querySelector('#recovery-delete-local-btn');
+        expect(rebuildBtn.classList.contains('destructive')).toBe(false);
+        expect(deleteBtn.classList.contains('destructive')).toBe(true);
+    });
+
+    it('recovery action blocks are rendered in guide.actions order without UI resorting', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [
+                { id: 'delete-local-data', destructive: true },
+                { id: 'rebuild-projection', destructive: false },
+            ],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const recoveryActions = document.querySelector('#recovery-actions');
+        const firstButton = recoveryActions.querySelector('.recovery-action-block button');
+        expect(firstButton.id).toBe('recovery-delete-local-btn');
+    });
+
+    it('recovery rebuild button triggers rebuild and shows success feedback', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [],
+        });
+        executeRecoveryActionMock.mockResolvedValue({ ok: true });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const rebuildBtn = document.querySelector('#recovery-rebuild-btn');
+        const recoveryFeedback = document.querySelector('#recovery-feedback');
+
+        rebuildBtn.click();
+        await flushAsyncWork();
+
+        expect(executeRecoveryActionMock).toHaveBeenCalledWith(
+            expect.objectContaining({ actionId: 'rebuild-projection' }),
+        );
+        expect(recoveryFeedback.textContent).toContain('rebuilt successfully');
+    });
+
+    it('recovery rebuild button shows partial outcome message when REBUILD_PARTIAL', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [],
+        });
+        executeRecoveryActionMock.mockResolvedValue({
+            ok: true,
+            code: 'REBUILD_PARTIAL',
+            message: 'Projection rebuilt from snapshot, but event replay could not be applied.',
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const rebuildBtn = document.querySelector('#recovery-rebuild-btn');
+        const recoveryFeedback = document.querySelector('#recovery-feedback');
+        rebuildBtn.click();
+        await flushAsyncWork();
+
+        expect(recoveryFeedback.textContent).toContain('event replay could not be applied');
+    });
+
+    it('recovery delete-local button cancel produces no side effects', async () => {
+        window.confirm = vi.fn().mockReturnValue(false);
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [],
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const deleteBtn = document.querySelector('#recovery-delete-local-btn');
+        deleteBtn.click();
+        await flushAsyncWork();
+
+        expect(executeRecoveryActionMock).not.toHaveBeenCalled();
+    });
+
+    it('recovery delete-local button confirm triggers delete and refresh', async () => {
+        window.confirm = vi.fn().mockReturnValue(true);
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: true,
+            hasViolations: true,
+            violations: [{ invariant: 'X', detail: 'Y' }],
+            actions: [],
+        });
+        executeRecoveryActionMock.mockImplementation(async (opts) => {
+            if (opts?.onAfterDelete) await opts.onAfterDelete();
+            return { ok: true };
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        runBtn.click();
+        await flushAsyncWork();
+
+        const deleteBtn = document.querySelector('#recovery-delete-local-btn');
+        const recoveryFeedback = document.querySelector('#recovery-feedback');
+
+        deleteBtn.click();
+        await flushAsyncWork();
+
+        expect(executeRecoveryActionMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                actionId: 'delete-local-data',
+                confirmed: true,
+            }),
+        );
+        expect(rebuildPlanningProjectionMock).toHaveBeenCalled();
+        expect(recoveryFeedback.textContent).toContain('Local data deleted');
+    });
+
+    it('recovery failure shows sanitized message (no raw technical content)', async () => {
+        runGuidedRecoveryMock.mockResolvedValue({
+            ok: false,
+            code: 'RECOVERY_CHECK_FAILED',
+            message: 'Integrity check could not complete. Please try again.',
+        });
+        const { initializePlanningInboxApp } = await import('./initializePlanningInboxApp');
+        initializePlanningInboxApp(document);
+        await flushAsyncWork();
+
+        const runBtn = document.querySelector('#run-integrity-check-btn');
+        const recoveryFeedback = document.querySelector('#recovery-feedback');
+
+        runBtn.click();
+        await flushAsyncWork();
+
+        expect(recoveryFeedback.textContent).toContain('try again');
+        expect(recoveryFeedback.textContent).not.toContain('RECOVERY_CHECK_FAILED');
     });
 
     it('shows non-blocking sync provider feedback when reconcile provider is missing', async () => {

@@ -1,3 +1,4 @@
+import { appendPlanningEvent } from './appendPlanningEvent';
 import { mutatePlanningState } from '../invariants/mutationGuardrail';
 import { ensureE2EEKeyReady } from '../sync/e2eeClientCrypto';
 
@@ -18,5 +19,18 @@ export async function setSyncMode(enabled) {
             };
         }
     }
-    return mutatePlanningState('setSyncMode', { enabled });
+    const result = await mutatePlanningState('setSyncMode', { enabled });
+    if (result?.ok) {
+        appendPlanningEvent(
+            {
+                timestamp: new Date().toISOString(),
+                event_type: 'planning.sync.mode_changed',
+                entity_id: 'sync-mode',
+                payload_version: 1,
+                payload: { enabled },
+            },
+            {},
+        ).catch(console.error);
+    }
+    return result;
 }

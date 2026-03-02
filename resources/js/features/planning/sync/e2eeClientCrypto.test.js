@@ -109,9 +109,22 @@ describe('e2eeClientCrypto', () => {
         expect(second.rotated).toBe(false);
     });
 
-    it('rotates key material when explicitly requested', async () => {
+    it('returns CONFIRMATION_REQUIRED when rotate requested without confirmed', async () => {
+        await ensureE2EEKeyReady({ indexedDB: fakeIdb });
+
+        const result = await ensureE2EEKeyReady({ rotate: true, indexedDB: fakeIdb });
+
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('CONFIRMATION_REQUIRED');
+    });
+
+    it('rotates key material when explicitly requested with confirmed', async () => {
         const first = await ensureE2EEKeyReady({ indexedDB: fakeIdb });
-        const second = await ensureE2EEKeyReady({ rotate: true, indexedDB: fakeIdb });
+        const second = await ensureE2EEKeyReady({
+            rotate: true,
+            confirmed: true,
+            indexedDB: fakeIdb,
+        });
 
         expect(first.ok).toBe(true);
         expect(second.ok).toBe(true);
@@ -123,7 +136,7 @@ describe('e2eeClientCrypto', () => {
         const first = await ensureE2EEKeyReady({ indexedDB: fakeIdb });
         const oldKeyId = first.keyId;
 
-        await ensureE2EEKeyReady({ rotate: true, indexedDB: fakeIdb });
+        await ensureE2EEKeyReady({ rotate: true, confirmed: true, indexedDB: fakeIdb });
 
         expect(fakeIdb._records.has(oldKeyId)).toBe(false);
     });

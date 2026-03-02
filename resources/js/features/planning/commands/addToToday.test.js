@@ -2,14 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { addToToday, swapToToday } from './addToToday';
 
 const mutatePlanningStateMock = vi.fn();
+const appendPlanningEventMock = vi.fn();
 
 vi.mock('../invariants/mutationGuardrail', () => ({
     mutatePlanningState: (action, params) => mutatePlanningStateMock(action, params),
+}));
+vi.mock('./appendPlanningEvent', () => ({
+    appendPlanningEvent: (...args) => appendPlanningEventMock(...args),
 }));
 
 describe('addToToday', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        appendPlanningEventMock.mockResolvedValue({ ok: true, id: 1 });
     });
 
     it('delegates to mutatePlanningState with addToToday action', async () => {
@@ -22,6 +27,13 @@ describe('addToToday', () => {
 
         expect(result.ok).toBe(true);
         expect(mutatePlanningStateMock).toHaveBeenCalledWith('addToToday', { taskId: 't1' });
+        expect(appendPlanningEventMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                event_type: 'planning.task.added_to_today',
+                entity_id: 't1',
+            }),
+            {},
+        );
     });
 
     it('returns TODAY_CAP_EXCEEDED when guardrail blocks', async () => {
@@ -35,6 +47,7 @@ describe('addToToday', () => {
 
         expect(result.ok).toBe(false);
         expect(result.code).toBe('TODAY_CAP_EXCEEDED');
+        expect(appendPlanningEventMock).not.toHaveBeenCalled();
     });
 
     it('returns TASK_NOT_FOUND when guardrail blocks', async () => {
@@ -47,6 +60,7 @@ describe('addToToday', () => {
 
         expect(result.ok).toBe(false);
         expect(result.code).toBe('TASK_NOT_FOUND');
+        expect(appendPlanningEventMock).not.toHaveBeenCalled();
     });
 
     it('returns INVARIANT_VIOLATION with retry message when guardrail catches persistence error', async () => {
@@ -60,6 +74,7 @@ describe('addToToday', () => {
 
         expect(result.ok).toBe(false);
         expect(result.message).toBe('Unable to save task locally. Please retry.');
+        expect(appendPlanningEventMock).not.toHaveBeenCalled();
     });
 });
 

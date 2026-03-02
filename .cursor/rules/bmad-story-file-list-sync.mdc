@@ -1,0 +1,41 @@
+---
+description: Enforce story File List synchronization after every fix cycle in BMad code-review workflow
+globs: _bmad-output/implementation-artifacts/*.md
+alwaysApply: false
+---
+
+# BMad Story: File List Must Be Synchronized After Every Fix Cycle
+
+After any code-review fix cycle (when files are added, modified, or deleted to resolve review findings), the `### File List` section in the story artifact MUST be updated before marking the story as `done`.
+
+## Required Actions
+
+1. **After every fix cycle**, scan the list of files actually changed (new, modified, deleted) and compare against the current `### File List` in the story artifact.
+2. **Add any missing files** with their status: `(new)`, `(modified)`, or `(deleted)`.
+3. **Update the story status** and `### Change Log` only after the File List is accurate.
+
+## File List Format
+
+```markdown
+### File List
+
+- path/to/new-file.js (new)
+- path/to/modified-file.js (modified)
+- path/to/modified-file.test.js (modified)
+```
+
+## When This Applies
+
+- During `code-review` workflow fix cycles (both automatic and manual fixes)
+- When the Senior Developer Review section is being written or updated
+- Before setting story `Status: done`
+
+## Common Failure Pattern to Avoid
+
+❌ BAD — Fix cycle modifies `initializePlanningInboxApp.js` and `initializePlanningInboxApp.test.js` but File List only lists the original implementation files.
+
+✅ GOOD — Every file touched during the fix cycle (including test files and app wiring files) appears in the File List with correct status label.
+
+## Verification Step
+
+Before closing a story, confirm: does the File List reflect the actual git diff for files in this story's scope? If not, update it first.

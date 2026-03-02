@@ -7,14 +7,15 @@
  * @returns {Promise<{ok: boolean, code?: string, message?: string}>}
  */
 
+import { DESTRUCTIVE_OPERATIONS } from './destructiveOperations';
+import { validateDestructiveConfirmation } from '../invariants/validateDestructiveConfirmation';
+
 export async function deleteSyncedPlanningData({ confirmed }) {
-    if (confirmed !== true) {
-        return {
-            ok: false,
-            code: 'DELETE_REQUIRES_CONFIRMATION',
-            message: 'Synced deletion requires explicit user confirmation.',
-        };
-    }
+    const confirmCheck = validateDestructiveConfirmation({
+        confirmed,
+        operationId: DESTRUCTIVE_OPERATIONS.DELETE_SYNCED,
+    });
+    if (!confirmCheck.ok) return confirmCheck;
 
     const deleteRemote = window?.taskinoSync?.deleteRemotePlanningData;
     if (typeof deleteRemote !== 'function') {
@@ -27,6 +28,9 @@ export async function deleteSyncedPlanningData({ confirmed }) {
 
     try {
         const result = await Promise.resolve(deleteRemote());
+        if (result && typeof result === 'object' && result.ok === true) {
+            return { ok: true };
+        }
         if (result && typeof result === 'object' && result.ok === false) {
             return {
                 ok: false,
@@ -34,7 +38,11 @@ export async function deleteSyncedPlanningData({ confirmed }) {
                 message: 'Synced deletion could not be confirmed. Please retry.',
             };
         }
-        return { ok: true };
+        return {
+            ok: false,
+            code: 'SYNCED_DELETE_UNCONFIRMED',
+            message: 'Synced deletion could not be confirmed. Please retry.',
+        };
     } catch {
         return {
             ok: false,

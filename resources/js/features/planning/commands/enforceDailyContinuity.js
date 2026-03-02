@@ -1,3 +1,4 @@
+import { appendPlanningEvent } from './appendPlanningEvent';
 import { mutatePlanningState } from '../invariants/mutationGuardrail';
 
 /**
@@ -8,5 +9,18 @@ import { mutatePlanningState } from '../invariants/mutationGuardrail';
  * @returns {Promise<{ok: boolean, applied?: boolean, updatedCount?: number}>}
  */
 export async function enforceDailyContinuity() {
-    return mutatePlanningState('enforceDailyContinuity', {});
+    const result = await mutatePlanningState('enforceDailyContinuity', {});
+    if (result?.ok) {
+        appendPlanningEvent(
+            {
+                timestamp: new Date().toISOString(),
+                event_type: 'planning.cycle.continuity_enforced',
+                entity_id: 'day-cycle',
+                payload_version: 1,
+                payload: { applied: result.applied, updatedCount: result.updatedCount ?? 0 },
+            },
+            {},
+        ).catch(console.error);
+    }
+    return result;
 }

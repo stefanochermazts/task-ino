@@ -4,6 +4,7 @@ import { deleteLocalPlanningData } from './deleteLocalPlanningData';
 const replaceAllTasksMock = vi.fn();
 const saveSyncModeMock = vi.fn();
 const clearE2EEKeyMaterialMock = vi.fn();
+const clearEventLogMock = vi.fn();
 
 vi.mock('../persistence/inboxTaskStore', () => ({
     replaceAllTasks: (tasks) => replaceAllTasksMock(tasks),
@@ -11,6 +12,10 @@ vi.mock('../persistence/inboxTaskStore', () => ({
 
 vi.mock('../persistence/syncModeStore', () => ({
     saveSyncMode: (enabled) => saveSyncModeMock(enabled),
+}));
+
+vi.mock('../persistence/eventLogStore', () => ({
+    clearEventLog: () => clearEventLogMock(),
 }));
 
 vi.mock('../sync/e2eeClientCrypto', () => ({
@@ -24,6 +29,7 @@ describe('deleteLocalPlanningData', () => {
         vi.clearAllMocks();
         replaceAllTasksMock.mockResolvedValue({ ok: true, count: 0 });
         saveSyncModeMock.mockReturnValue({ ok: true });
+        clearEventLogMock.mockResolvedValue(undefined);
         clearE2EEKeyMaterialMock.mockResolvedValue({ ok: true });
 
         originalLocalStorage = window.localStorage;
@@ -49,7 +55,7 @@ describe('deleteLocalPlanningData', () => {
         const result = await deleteLocalPlanningData({ confirmed: false });
 
         expect(result.ok).toBe(false);
-        expect(result.code).toBe('DELETE_REQUIRES_CONFIRMATION');
+        expect(result.code).toBe('CONFIRMATION_REQUIRED');
         expect(replaceAllTasksMock).not.toHaveBeenCalled();
     });
 
@@ -66,6 +72,7 @@ describe('deleteLocalPlanningData', () => {
         expect(window.localStorage.getItem('planning.lastPlanningDate')).toBeNull();
         expect(window.localStorage.getItem('planning.areas')).toBeNull();
         expect(saveSyncModeMock).toHaveBeenCalledWith(false);
+        expect(clearEventLogMock).toHaveBeenCalledTimes(1);
         expect(clearE2EEKeyMaterialMock).toHaveBeenCalled();
     });
 
@@ -104,6 +111,39 @@ describe('deleteLocalPlanningData', () => {
 
         expect(result.ok).toBe(false);
         expect(result.code).toBe('LOCAL_DELETE_SYNCMODE_FAILED');
+        expect(clearEventLogMock).not.toHaveBeenCalled();
         expect(clearE2EEKeyMaterialMock).not.toHaveBeenCalled();
+    });
+
+    it('does not block deletion success when clearEventLog fails', async () => {
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        clearEventLogMock.mockRejectedValue(new Error('idb unavailable'));
+
+        const result = await deleteLocalPlanningData({ confirmed: true });
+
+        expect(result.ok).toBe(true);
+        expect(clearEventLogMock).toHaveBeenCalledTimes(1);
+        expect(clearE2EEKeyMaterialMock).toHaveBeenCalled();
+        consoleSpy.mockRestore();
+    });
+
+    it('invokes onAfterDelete callback after successful delete', async () => {
+        const onAfterDelete = vi.fn().mockResolvedValue(undefined);
+
+        const result = await deleteLocalPlanningData({ confirmed: true, onAfterDelete });
+
+        expect(result.ok).toBe(true);
+        expect(onAfterDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('invokes onAfterDelete even when E2EE clear fails (partial success)', async () => {
+        clearE2EEKeyMaterialMock.mockResolvedValue({ ok: false });
+        const onAfterDelete = vi.fn().mockResolvedValue(undefined);
+
+        const result = await deleteLocalPlanningData({ confirmed: true, onAfterDelete });
+
+        expect(result.ok).toBe(true);
+        expect(result.code).toBe('LOCAL_DELETE_E2EE_PARTIAL');
+        expect(onAfterDelete).toHaveBeenCalledTimes(1);
     });
 });

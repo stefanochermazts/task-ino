@@ -8,6 +8,9 @@
  * @returns {Promise<{ok: boolean, code?: string, message?: string}>}
  */
 
+import { DESTRUCTIVE_OPERATIONS } from './destructiveOperations';
+import { validateDestructiveConfirmation } from '../invariants/validateDestructiveConfirmation';
+import { appendPlanningEvent } from './appendPlanningEvent';
 import { saveSyncMode } from '../persistence/syncModeStore';
 import { clearE2EEKeyMaterial } from '../sync/e2eeClientCrypto';
 
@@ -16,13 +19,11 @@ function sanitizeRemoteResetFeedback() {
 }
 
 export async function resetSyncState({ confirmed }) {
-    if (confirmed !== true) {
-        return {
-            ok: false,
-            code: 'RESET_REQUIRES_CONFIRMATION',
-            message: 'Sync reset requires explicit user confirmation.',
-        };
-    }
+    const confirmCheck = validateDestructiveConfirmation({
+        confirmed,
+        operationId: DESTRUCTIVE_OPERATIONS.RESET_SYNC,
+    });
+    if (!confirmCheck.ok) return confirmCheck;
 
     let remoteError = null;
     const revoke = window?.taskinoSync?.revokeDeviceRegistration;
@@ -55,6 +56,16 @@ export async function resetSyncState({ confirmed }) {
     }
 
     if (remoteError) {
+        appendPlanningEvent(
+            {
+                timestamp: new Date().toISOString(),
+                event_type: 'planning.sync.reset',
+                entity_id: 'sync-reset',
+                payload_version: 1,
+                payload: { remotePartial: true },
+            },
+            {},
+        ).catch(console.error);
         return {
             ok: true,
             code: 'RESET_REMOTE_PARTIAL',
@@ -62,5 +73,15 @@ export async function resetSyncState({ confirmed }) {
         };
     }
 
+    appendPlanningEvent(
+        {
+            timestamp: new Date().toISOString(),
+            event_type: 'planning.sync.reset',
+            entity_id: 'sync-reset',
+            payload_version: 1,
+            payload: {},
+        },
+        {},
+    ).catch(console.error);
     return { ok: true };
 }

@@ -1,3 +1,4 @@
+import { appendPlanningEvent } from './appendPlanningEvent';
 import { validateQuickCaptureInput } from '../invariants/validateQuickCaptureInput';
 import { saveInboxTask } from '../persistence/inboxTaskStore';
 
@@ -27,6 +28,16 @@ export async function createInboxTask(rawTitle) {
 
     try {
         await saveInboxTask(task);
+        appendPlanningEvent(
+            {
+                timestamp: nowIso,
+                event_type: 'planning.task.created',
+                entity_id: task.id,
+                payload_version: 1,
+                payload: { title: task.title },
+            },
+            {},
+        ).catch(console.error);
         return { ok: true, task };
     } catch (_error) {
         return {

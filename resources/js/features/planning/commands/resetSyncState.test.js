@@ -3,6 +3,7 @@ import { resetSyncState } from './resetSyncState';
 
 const saveSyncModeMock = vi.fn();
 const clearE2EEKeyMaterialMock = vi.fn();
+const appendPlanningEventMock = vi.fn();
 
 vi.mock('../persistence/syncModeStore', () => ({
     saveSyncMode: (enabled) => saveSyncModeMock(enabled),
@@ -11,12 +12,16 @@ vi.mock('../persistence/syncModeStore', () => ({
 vi.mock('../sync/e2eeClientCrypto', () => ({
     clearE2EEKeyMaterial: (storage) => clearE2EEKeyMaterialMock(storage),
 }));
+vi.mock('./appendPlanningEvent', () => ({
+    appendPlanningEvent: (...args) => appendPlanningEventMock(...args),
+}));
 
 describe('resetSyncState', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         saveSyncModeMock.mockReturnValue({ ok: true });
         clearE2EEKeyMaterialMock.mockResolvedValue({ ok: true });
+        appendPlanningEventMock.mockResolvedValue({ ok: true, id: 1 });
         window.taskinoSync = undefined;
     });
 
@@ -24,7 +29,7 @@ describe('resetSyncState', () => {
         const result = await resetSyncState({ confirmed: false });
 
         expect(result.ok).toBe(false);
-        expect(result.code).toBe('RESET_REQUIRES_CONFIRMATION');
+        expect(result.code).toBe('CONFIRMATION_REQUIRED');
         expect(saveSyncModeMock).not.toHaveBeenCalled();
         expect(clearE2EEKeyMaterialMock).not.toHaveBeenCalled();
     });
@@ -35,6 +40,13 @@ describe('resetSyncState', () => {
         expect(result.ok).toBe(true);
         expect(saveSyncModeMock).toHaveBeenCalledWith(false);
         expect(clearE2EEKeyMaterialMock).toHaveBeenCalled();
+        expect(appendPlanningEventMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                event_type: 'planning.sync.reset',
+                entity_id: 'sync-reset',
+            }),
+            {},
+        );
     });
 
     it('calls revokeDeviceRegistration when taskinoSync provides it', async () => {
@@ -58,6 +70,13 @@ describe('resetSyncState', () => {
         expect(result.code).toBe('RESET_REMOTE_PARTIAL');
         expect(saveSyncModeMock).toHaveBeenCalledWith(false);
         expect(clearE2EEKeyMaterialMock).toHaveBeenCalled();
+        expect(appendPlanningEventMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                event_type: 'planning.sync.reset',
+                payload: { remotePartial: true },
+            }),
+            {},
+        );
     });
 
     it('returns error when clearE2EEKeyMaterial fails', async () => {
@@ -68,6 +87,7 @@ describe('resetSyncState', () => {
         expect(result.ok).toBe(false);
         expect(result.code).toBe('E2EE_CLEAR_FAILED');
         expect(saveSyncModeMock).toHaveBeenCalledWith(false);
+        expect(appendPlanningEventMock).not.toHaveBeenCalled();
     });
 
     it('fails deterministically when sync mode cannot be saved locally', async () => {
@@ -78,6 +98,7 @@ describe('resetSyncState', () => {
         expect(result.ok).toBe(false);
         expect(result.code).toBe('RESET_LOCAL_SYNCMODE_FAILED');
         expect(clearE2EEKeyMaterialMock).not.toHaveBeenCalled();
+        expect(appendPlanningEventMock).not.toHaveBeenCalled();
     });
 
     it('sanitizes remote partial failure message', async () => {

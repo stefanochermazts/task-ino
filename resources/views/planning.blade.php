@@ -85,6 +85,71 @@
                         <p id="export-feedback" class="text-sm text-slate-600" aria-live="polite"></p>
                         <p id="control-feedback" class="text-sm text-slate-600" aria-live="polite"></p>
                     </div>
+                    <details id="event-timeline-panel" class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <summary class="cursor-pointer text-sm font-medium text-slate-700">Event Timeline</summary>
+                        <div class="mt-2">
+                            <label for="timeline-filter" class="text-xs text-slate-500">Filter by type:</label>
+                            <div class="mt-1 flex flex-wrap items-center gap-2">
+                                <select
+                                    id="timeline-filter"
+                                    class="rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none ring-blue-600 focus:ring-2"
+                                    aria-label="Filter events by type"
+                                >
+                                    <option value="all">All</option>
+                                </select>
+                                <button
+                                    type="button"
+                                    id="timeline-refresh-btn"
+                                    class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                    aria-label="Refresh timeline"
+                                >
+                                    Refresh
+                                </button>
+                            </div>
+                            <p id="timeline-feedback" class="mt-1 text-sm text-slate-600" aria-live="polite"></p>
+                            <ol id="timeline-list" class="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700"></ol>
+                        </div>
+                    </details>
+                    <section id="recovery-panel" class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <h3 class="text-xs font-medium uppercase tracking-wide text-slate-500">Recovery</h3>
+                        <p class="mt-1 text-xs text-slate-600">Run integrity check to detect issues and choose a recovery action.</p>
+                        <div class="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                id="run-integrity-check-btn"
+                                class="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                aria-label="Run integrity check"
+                            >
+                                Run integrity check
+                            </button>
+                        </div>
+                        <p id="recovery-feedback" class="mt-1 text-sm text-slate-600" aria-live="polite"></p>
+                        <div id="recovery-violations" class="mt-2 rounded border border-slate-200 bg-white p-2 text-sm text-slate-700"></div>
+                        <div id="recovery-actions" class="mt-2 hidden space-y-2">
+                            <div class="recovery-action-block flex flex-col gap-1">
+                                <button
+                                    type="button"
+                                    id="recovery-rebuild-btn"
+                                    class="w-fit rounded border border-blue-300 bg-white px-3 py-1 text-sm text-blue-800 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                    aria-label="Rebuild Today projection"
+                                >
+                                    Rebuild Today projection
+                                </button>
+                                <p class="text-xs text-slate-500">Recomputes the Today view from local task state. Reversible — no data is deleted.</p>
+                            </div>
+                            <div class="recovery-action-block flex flex-col gap-1">
+                                <button
+                                    type="button"
+                                    id="recovery-delete-local-btn"
+                                    class="destructive w-fit text-sm text-red-600 underline hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                    aria-label="Delete all local data (irreversible)"
+                                >
+                                    Delete all local data (irreversible)
+                                </button>
+                                <p class="text-xs text-slate-500">Permanently removes all local tasks, areas, and sync state.</p>
+                            </div>
+                        </div>
+                    </section>
                 </div>
 
                 <section aria-labelledby="quick-capture-title" class="mb-6">

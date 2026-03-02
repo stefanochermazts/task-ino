@@ -10,7 +10,7 @@ describe('deleteSyncedPlanningData', () => {
         const result = await deleteSyncedPlanningData({ confirmed: false });
 
         expect(result.ok).toBe(false);
-        expect(result.code).toBe('DELETE_REQUIRES_CONFIRMATION');
+        expect(result.code).toBe('CONFIRMATION_REQUIRED');
     });
 
     it('returns error when no sync provider provides deleteRemotePlanningData', async () => {
@@ -56,12 +56,13 @@ describe('deleteSyncedPlanningData', () => {
         expect(result.code).toBe('SYNCED_DELETE_FAILED');
     });
 
-    it(' treats falsy but non-object return as success (provider may return nothing)', async () => {
+    it('treats unconfirmed remote response shape as failure', async () => {
         const deleteMock = vi.fn().mockResolvedValue(undefined);
         window.taskinoSync = { deleteRemotePlanningData: deleteMock };
 
         const result = await deleteSyncedPlanningData({ confirmed: true });
 
-        expect(result.ok).toBe(true);
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('SYNCED_DELETE_UNCONFIRMED');
     });
 });

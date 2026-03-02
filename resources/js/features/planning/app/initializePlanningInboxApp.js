@@ -19,6 +19,9 @@ import { exportPlanningData } from '../commands/exportPlanningData';
 import { resetSyncState } from '../commands/resetSyncState';
 import { deleteLocalPlanningData } from '../commands/deleteLocalPlanningData';
 import { deleteSyncedPlanningData } from '../commands/deleteSyncedPlanningData';
+import { rebuildPlanningProjection } from '../commands/rebuildPlanningProjection';
+import { initializeTimelineSection } from './timelineSectionUI';
+import { initializeRecoverySection } from './recoverySectionUI';
 import { computeTodayProjection, isValidTaskRecord } from '../projections/computeTodayProjection';
 import { renderInboxProjection } from '../projections/renderInboxProjection';
 import { renderTodayProjection } from '../projections/renderTodayProjection';
@@ -104,6 +107,17 @@ function readUi(root) {
         resetSyncBtn: root.querySelector('#reset-sync-btn'),
         deleteLocalBtn: root.querySelector('#delete-local-btn'),
         deleteSyncedBtn: root.querySelector('#delete-synced-btn'),
+        eventTimelinePanel: root.querySelector('#event-timeline-panel'),
+        timelineFilter: root.querySelector('#timeline-filter'),
+        timelineList: root.querySelector('#timeline-list'),
+        timelineRefreshBtn: root.querySelector('#timeline-refresh-btn'),
+        timelineFeedback: root.querySelector('#timeline-feedback'),
+        runIntegrityCheckBtn: root.querySelector('#run-integrity-check-btn'),
+        recoveryViolations: root.querySelector('#recovery-violations'),
+        recoveryActions: root.querySelector('#recovery-actions'),
+        recoveryRebuildBtn: root.querySelector('#recovery-rebuild-btn'),
+        recoveryDeleteLocalBtn: root.querySelector('#recovery-delete-local-btn'),
+        recoveryFeedback: root.querySelector('#recovery-feedback'),
     };
 }
 
@@ -447,6 +461,22 @@ export function initializePlanningInboxApp(doc) {
         renderTodayProjection(todayProjection, ui, { onRemoveFromToday });
         return safeTasks;
     };
+
+    async function rebuildTodayViewFromStores() {
+        await rebuildPlanningProjection({
+            ui: {
+                todayList: ui.todayList,
+                todayEmpty: ui.todayEmpty,
+                todayCount: ui.todayCount,
+                todayCapValue: ui.todayCapValue,
+            },
+            onRemoveFromToday: async (taskId) => {
+                const res = await removeFromToday(taskId);
+                if (res.ok) await refreshInbox();
+                return res;
+            },
+        });
+    }
 
     function showOverCapPanel(tasks) {
         if (!ui.overCapPanel || !ui.overCapSwapList || !ui.overCapCancel) return;
@@ -829,13 +859,18 @@ export function initializePlanningInboxApp(doc) {
             ui.controlFeedback.textContent = '';
             ui.deleteLocalBtn.disabled = true;
             try {
-                const result = await deleteLocalPlanningData({ confirmed: true });
+                const result = await deleteLocalPlanningData({
+                    confirmed: true,
+                    onAfterDelete: async () => {
+                        await refreshInbox();
+                        await rebuildTodayViewFromStores();
+                    },
+                });
                 if (result.ok) {
                     updateSyncModeUi();
                     syncUiState.lastError = null;
                     updateSyncStatusFromRuntime();
                     if (ui.todayCapInput) ui.todayCapInput.value = String(readTodayCap());
-                    await refreshInbox();
                     ui.controlFeedback.textContent =
                         result.code === 'LOCAL_DELETE_E2EE_PARTIAL'
                             ? result.message ?? 'Local data deleted.'
@@ -903,6 +938,19 @@ export function initializePlanningInboxApp(doc) {
             }
         });
     }
+
+    initializeTimelineSection(ui);
+
+    initializeRecoverySection(ui, {
+        refreshInbox,
+        rebuildTodayView: rebuildTodayViewFromStores,
+        onDeleteSuccess: () => {
+            updateSyncModeUi();
+            syncUiState.lastError = null;
+            updateSyncStatusFromRuntime();
+            if (ui.todayCapInput) ui.todayCapInput.value = String(readTodayCap());
+        },
+    });
 
     if (ui.syncModeToggle && ui.syncModeLabel) {
         updateSyncModeUi();

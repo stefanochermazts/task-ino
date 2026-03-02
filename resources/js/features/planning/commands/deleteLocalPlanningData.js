@@ -3,10 +3,15 @@
  * Requires explicit user confirmation. Clears tasks, areas, todayCap, day-cycle,
  * sync mode, and E2EE key material. No in-app recovery.
  *
- * @param {{ confirmed: boolean }} params - Must pass confirmed: true (caller obtains user confirmation)
+ * @param {{ confirmed: boolean, onAfterDelete?: () => Promise<void>|void }} params
+ *   - confirmed: true (caller obtains user confirmation)
+ *   - onAfterDelete: optional callback invoked after successful delete (e.g. to rebuild projection/refresh UI)
  * @returns {Promise<{ok: boolean, code?: string, message?: string}>}
  */
 
+import { DESTRUCTIVE_OPERATIONS } from './destructiveOperations';
+import { validateDestructiveConfirmation } from '../invariants/validateDestructiveConfirmation';
+import { clearEventLog } from '../persistence/eventLogStore';
 import { replaceAllTasks } from '../persistence/inboxTaskStore';
 import { saveSyncMode } from '../persistence/syncModeStore';
 import { clearE2EEKeyMaterial } from '../sync/e2eeClientCrypto';
@@ -24,14 +29,12 @@ function clearLocalStorageKeys() {
     }
 }
 
-export async function deleteLocalPlanningData({ confirmed }) {
-    if (confirmed !== true) {
-        return {
-            ok: false,
-            code: 'DELETE_REQUIRES_CONFIRMATION',
-            message: 'Local deletion requires explicit user confirmation.',
-        };
-    }
+export async function deleteLocalPlanningData({ confirmed, onAfterDelete } = {}) {
+    const confirmCheck = validateDestructiveConfirmation({
+        confirmed,
+        operationId: DESTRUCTIVE_OPERATIONS.DELETE_LOCAL,
+    });
+    if (!confirmCheck.ok) return confirmCheck;
 
     try {
         const replaceResult = await replaceAllTasks([]);
@@ -60,8 +63,16 @@ export async function deleteLocalPlanningData({ confirmed }) {
                 message: 'Local deletion could not disable sync settings. Please retry.',
             };
         }
+        try {
+            await clearEventLog();
+        } catch (err) {
+            console.error('Event log clear during local delete:', err);
+        }
         const clearResult = await clearE2EEKeyMaterial();
         if (!clearResult.ok) {
+            if (typeof onAfterDelete === 'function') {
+                await Promise.resolve(onAfterDelete()).catch(console.error);
+            }
             return {
                 ok: true,
                 code: 'LOCAL_DELETE_E2EE_PARTIAL',
@@ -69,6 +80,9 @@ export async function deleteLocalPlanningData({ confirmed }) {
             };
         }
 
+        if (typeof onAfterDelete === 'function') {
+            await Promise.resolve(onAfterDelete()).catch(console.error);
+        }
         return { ok: true };
     } catch {
         return {

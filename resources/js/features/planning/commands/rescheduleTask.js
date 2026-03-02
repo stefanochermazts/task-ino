@@ -1,3 +1,4 @@
+import { appendPlanningEvent } from './appendPlanningEvent';
 import { mutatePlanningState } from '../invariants/mutationGuardrail';
 
 /**
@@ -9,5 +10,18 @@ import { mutatePlanningState } from '../invariants/mutationGuardrail';
  * @returns {Promise<{ok: boolean, code?: string, message?: string, task?: object}>}
  */
 export async function rescheduleTask(taskId, scheduledFor) {
-    return mutatePlanningState('rescheduleTask', { taskId, scheduledFor });
+    const result = await mutatePlanningState('rescheduleTask', { taskId, scheduledFor });
+    if (result?.ok) {
+        appendPlanningEvent(
+            {
+                timestamp: new Date().toISOString(),
+                event_type: 'planning.task.rescheduled',
+                entity_id: taskId,
+                payload_version: 1,
+                payload: { scheduledFor: scheduledFor ?? null },
+            },
+            {},
+        ).catch(console.error);
+    }
+    return result;
 }
